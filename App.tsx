@@ -154,20 +154,31 @@ export default function App() {
           <Text style={styles.balanceText}>
             💰 {monBalance}
           </Text>
-          {Object.keys(tokenBalances).length > 0 && (
-            <View style={styles.tokenBalancesContainer}>
-              {Object.entries(tokenBalances).map(([symbol, balance]) => (
-                <Text key={symbol} style={styles.tokenBalanceText}>
-                  🪙 {symbol}: {parseFloat(balance) > 0 ? balance : '0'}
-                </Text>
-              ))}
-            </View>
-          )}
         </View>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Token Balances Section */}
+      {Object.keys(tokenBalances).length > 0 && (
+        <View style={styles.tokenBalancesSection}>
+          <Text style={styles.tokenBalancesTitle}>🪙 Token Balances:</Text>
+          <View style={styles.tokenBalancesGrid}>
+            {Object.entries(tokenBalances).map(([symbol, balance]) => {
+              const balanceNum = parseFloat(balance);
+              const displayBalance = isNaN(balanceNum) ? '0' : 
+                balanceNum > 0 ? balance : '0';
+              return (
+                <View key={symbol} style={styles.tokenBalanceItem}>
+                  <Text style={styles.tokenBalanceSymbol}>{symbol}</Text>
+                  <Text style={styles.tokenBalanceAmount}>{displayBalance}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
 
       <View style={styles.content}>
         <Text style={styles.title}>Mobil3 NFC App</Text>
@@ -212,7 +223,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 20,
@@ -239,13 +250,53 @@ const styles = StyleSheet.create({
     marginTop: 3,
     fontWeight: '600',
   },
-  tokenBalancesContainer: {
-    marginTop: 5,
+  tokenBalancesSection: {
+    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
-  tokenBalanceText: {
-    fontSize: 10,
+  tokenBalancesTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  tokenBalancesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  tokenBalanceItem: {
+    backgroundColor: 'white',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 8,
+    marginRight: 8,
+    minWidth: 80,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tokenBalanceSymbol: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#007AFF',
+    marginBottom: 2,
+  },
+  tokenBalanceAmount: {
+    fontSize: 11,
     color: '#666',
-    marginTop: 2,
+    textAlign: 'center',
   },
   logoutButton: {
     backgroundColor: '#dc3545',

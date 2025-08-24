@@ -99,6 +99,14 @@ export interface Token {
 export const MONAD_TESTNET_TOKENS: Token[] = [
   {
     chainId: 10143,
+    name: "Monad",
+    symbol: "MON",
+    decimals: 18,
+    address: "0x0000000000000000000000000000000000000000", // Native token has zero address
+    logoURI: "https://assets.coingecko.com/coins/images/34503/small/monad.jpg",
+  },
+  {
+    chainId: 10143,
     name: "Wrapped Monad",
     symbol: "WMON",
     decimals: 18,

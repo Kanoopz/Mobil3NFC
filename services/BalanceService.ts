@@ -89,23 +89,36 @@ class BalanceService {
 
   // Get formatted balance string
   async getFormattedBalance(address: string): Promise<string> {
-    const balanceInfo = await this.getMonBalance(address);
-    if (!balanceInfo) {
-      return 'Error fetching balance';
-    }
-    
-    const balance = parseFloat(balanceInfo.balanceInEth);
-    
-    if (balance === 0) {
-      return '0 MON';
-    } else if (balance < 0.001) {
-      return '< 0.001 MON';
-    } else if (balance < 1) {
-      return `${balance.toFixed(6)} MON`;
-    } else if (balance < 1000) {
-      return `${balance.toFixed(4)} MON`;
-    } else {
-      return `${balance.toFixed(2)} MON`;
+    try {
+      const balanceInfo = await this.getMonBalance(address);
+      if (!balanceInfo) {
+        return 'Error fetching balance';
+      }
+      
+      const balance = parseFloat(balanceInfo.balanceInEth);
+      
+      if (isNaN(balance)) {
+        return 'Invalid balance';
+      }
+      
+      if (balance === 0) {
+        return '0 MON';
+      } else if (balance < 0.000001) {
+        return '< 0.000001 MON';
+      } else if (balance < 0.001) {
+        return `${balance.toFixed(6)} MON`;
+      } else if (balance < 1) {
+        return `${balance.toFixed(4)} MON`;
+      } else if (balance < 1000) {
+        return `${balance.toFixed(3)} MON`;
+      } else if (balance < 1000000) {
+        return `${balance.toFixed(2)} MON`;
+      } else {
+        return `${(balance / 1000000).toFixed(2)}M MON`;
+      }
+    } catch (error) {
+      console.error('❌ Error formatting MON balance:', error);
+      return 'Error formatting balance';
     }
   }
 
@@ -197,23 +210,36 @@ class BalanceService {
 
   // Get formatted token balance string
   async getFormattedTokenBalance(userAddress: string, tokenSymbol: string): Promise<string> {
-    const balanceInfo = await this.getTokenBalance(userAddress, tokenSymbol);
-    if (!balanceInfo) {
-      return `Error fetching ${tokenSymbol}`;
-    }
-    
-    const balance = parseFloat(balanceInfo.balanceFormatted);
-    
-    if (balance === 0) {
-      return `0 ${tokenSymbol}`;
-    } else if (balance < 0.001) {
-      return `< 0.001 ${tokenSymbol}`;
-    } else if (balance < 1) {
-      return `${balance.toFixed(6)} ${tokenSymbol}`;
-    } else if (balance < 1000) {
-      return `${balance.toFixed(4)} ${tokenSymbol}`;
-    } else {
-      return `${balance.toFixed(2)} ${tokenSymbol}`;
+    try {
+      const balanceInfo = await this.getTokenBalance(userAddress, tokenSymbol);
+      if (!balanceInfo) {
+        return `Error fetching ${tokenSymbol}`;
+      }
+      
+      const balance = parseFloat(balanceInfo.balanceFormatted);
+      
+      if (isNaN(balance)) {
+        return `Invalid ${tokenSymbol}`;
+      }
+      
+      if (balance === 0) {
+        return `0 ${tokenSymbol}`;
+      } else if (balance < 0.000001) {
+        return `< 0.000001 ${tokenSymbol}`;
+      } else if (balance < 0.001) {
+        return `${balance.toFixed(6)} ${tokenSymbol}`;
+      } else if (balance < 1) {
+        return `${balance.toFixed(4)} ${tokenSymbol}`;
+      } else if (balance < 1000) {
+        return `${balance.toFixed(3)} ${tokenSymbol}`;
+      } else if (balance < 1000000) {
+        return `${balance.toFixed(2)} ${tokenSymbol}`;
+      } else {
+        return `${(balance / 1000000).toFixed(2)}M ${tokenSymbol}`;
+      }
+    } catch (error) {
+      console.error(`❌ Error formatting ${tokenSymbol} balance:`, error);
+      return `Error formatting ${tokenSymbol}`;
     }
   }
 

@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { MONAD_TESTNET } from '../constants/blockchain';
+import { MONAD_TESTNET, MONAD_TESTNET_TOKENS, Token } from '../constants/blockchain';
 
 interface PaymentInfo {
   fromAddress: string;
@@ -16,6 +16,15 @@ interface PaymentResult {
   error?: string;
   message: string;
 }
+
+// ERC-20 ABI for token transfers
+const ERC20_ABI = [
+  'function transfer(address to, uint256 amount) returns (bool)',
+  'function balanceOf(address account) view returns (uint256)',
+  'function decimals() view returns (uint8)',
+  'function symbol() view returns (string)',
+  'function name() view returns (string)'
+];
 
 class PaymentService {
   private static instance: PaymentService;
@@ -43,7 +52,7 @@ class PaymentService {
     }
   }
 
-  // Send MON tokens
+  // Send MON tokens (native token)
   async sendMonTokens(
     fromPrivateKey: string,
     toAddress: string,
@@ -130,6 +139,116 @@ class PaymentService {
         error: error instanceof Error ? error.message : 'Unknown error',
         message: 'Payment failed. Please try again.'
       };
+    }
+  }
+
+  // Send ERC-20 tokens
+  async sendERC20Tokens(
+    fromPrivateKey: string,
+    toAddress: string,
+    amount: string,
+    token: Token
+  ): Promise<PaymentResult> {
+    try {
+      if (!this.provider) {
+        return {
+          success: false,
+          error: 'Provider not initialized',
+          message: 'Payment service not connected to network'
+        };
+      }
+
+      if (!ethers.isAddress(toAddress)) {
+        return {
+          success: false,
+          error: 'Invalid recipient address',
+          message: 'Please provide a valid recipient address'
+        };
+      }
+
+      if (!ethers.isAddress(token.address)) {
+        return {
+          success: false,
+          error: 'Invalid token address',
+          message: 'Token contract address is invalid'
+        };
+      }
+
+      // Create wallet from private key
+      const formattedKey = fromPrivateKey.startsWith('0x') ? fromPrivateKey : `0x${fromPrivateKey}`;
+      const wallet = new ethers.Wallet(formattedKey, this.provider);
+      
+      console.log(`👤 Sender address: ${wallet.address}`);
+      console.log(`🪙 Token: ${token.symbol} (${token.address})`);
+
+      // Create contract instance
+      const tokenContract = new ethers.Contract(token.address, ERC20_ABI, wallet);
+      
+      // Parse amount based on token decimals
+      const amountWei = ethers.parseUnits(amount, token.decimals);
+      if (amountWei <= 0n) {
+        return {
+          success: false,
+          error: 'Invalid amount',
+          message: 'Payment amount must be greater than 0'
+        };
+      }
+
+      console.log(`💸 Initiating ${token.symbol} transfer: ${amount} ${token.symbol}`);
+      console.log(`📤 From: ${wallet.address}`);
+      console.log(`📥 To: ${toAddress}`);
+
+      // Check token balance
+      const balance = await tokenContract.balanceOf(wallet.address);
+      if (balance < amountWei) {
+        const formattedBalance = ethers.formatUnits(balance, token.decimals);
+        return {
+          success: false,
+          error: 'Insufficient token balance',
+          message: `Insufficient ${token.symbol} balance. You have ${formattedBalance} ${token.symbol}, need ${amount} ${token.symbol}`
+        };
+      }
+
+      // Send token transfer
+      const transaction = await tokenContract.transfer(toAddress, amountWei);
+      const txHash = transaction.hash;
+      
+      console.log(`✅ ${token.symbol} transaction sent! Hash: ${txHash}`);
+      console.log('⏳ Waiting for confirmation...');
+
+      // Wait for confirmation
+      const receipt = await transaction.wait();
+      
+      console.log(`🎉 ${token.symbol} transaction confirmed! Block: ${receipt?.blockNumber}`);
+      console.log(`💰 Gas used: ${receipt?.gasUsed?.toString()}`);
+
+      return {
+        success: true,
+        transactionHash: txHash,
+        message: `Successfully sent ${amount} ${token.symbol} to ${toAddress.slice(0, 6)}...${toAddress.slice(-4)}`
+      };
+
+    } catch (error) {
+      console.error(`❌ ${token.symbol} payment failed:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        message: `${token.symbol} payment failed. Please try again.`
+      };
+    }
+  }
+
+  // Send any token (MON or ERC-20)
+  async sendTokens(
+    fromPrivateKey: string,
+    toAddress: string,
+    amount: string,
+    token: Token
+  ): Promise<PaymentResult> {
+    if (token.symbol === 'MON' || token.address === '0x0000000000000000000000000000000000000000') {
+      return this.sendMonTokens(fromPrivateKey, toAddress, amount);
+    } else {
+      return this.sendERC20Tokens(fromPrivateKey, toAddress, amount, token);
     }
   }
 

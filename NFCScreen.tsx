@@ -5,10 +5,11 @@ import {
   NFCTagType4NDEFContentType,
   NFCTagType4,
 } from 'react-native-hce';
-import NfcManager, { NfcTech, Ndef } from 'react-native-nfc-manager';
+import NfcManager, { NfcTech } from 'react-native-nfc-manager';
 import AuthService from './AuthService';
 import BalanceService from './services/BalanceService';
 import PaymentService from './services/PaymentService';
+import { MONAD_TESTNET_TOKENS, Token } from './constants/blockchain';
 
 interface NFCScreenProps {
   onBack: () => void;
@@ -17,6 +18,8 @@ interface NFCScreenProps {
 export default function NFCScreen({ onBack }: NFCScreenProps) {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [recipientAddress, setRecipientAddress] = useState('');
+  const [selectedToken, setSelectedToken] = useState<Token>(MONAD_TESTNET_TOKENS.find(t => t.symbol === 'MON') || MONAD_TESTNET_TOKENS[0]);
+  const [showTokenSelector, setShowTokenSelector] = useState(false);
   const [hceSupported, setHceSupported] = useState(false);
   const [nfcSupported, setNfcSupported] = useState(false);
   const [isHceActive, setIsHceActive] = useState(false);
@@ -176,9 +179,42 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       useNativeDriver: false,
     }).start();
     
-    // Auto-hide after 1.5 seconds
-    setTimeout(() => {
+    // Auto-hide after 1.5 seconds and stop operations
+    setTimeout(async () => {
       hideTransferComplete();
+      
+      // Stop operations based on type
+      if (type === 'paying') {
+        stopNfcReading();
+        
+        // Refresh balances after payment
+        const userAddress = authService.getEthereumAddress();
+        if (userAddress && userAddress !== 'Invalid Address') {
+          console.log('🔄 Auto-refreshing balances after payment...');
+          try {
+            await balanceService.getFormattedBalance(userAddress);
+            await balanceService.getAllTokenBalances(userAddress);
+            console.log('✅ Balances auto-refreshed after payment');
+          } catch (error) {
+            console.error('❌ Error auto-refreshing balances after payment:', error);
+          }
+        }
+      } else if (type === 'receiving') {
+        stopHceOperation();
+        
+        // Refresh balances after address sharing
+        const userAddress = authService.getEthereumAddress();
+        if (userAddress && userAddress !== 'Invalid Address') {
+          console.log('🔄 Auto-refreshing balances after address sharing...');
+          try {
+            await balanceService.getFormattedBalance(userAddress);
+            await balanceService.getAllTokenBalances(userAddress);
+            console.log('✅ Balances auto-refreshed after address sharing');
+          } catch (error) {
+            console.error('❌ Error auto-refreshing balances after address sharing:', error);
+          }
+        }
+      }
     }, 1500);
   };
 
@@ -342,7 +378,24 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
               'Address: ' + userAddress + '\n\n' +
               'The other device can now send you MON tokens.',
               [
-                { text: 'OK', onPress: () => setModalVisible(false) }
+                { 
+                  text: 'OK', 
+                  onPress: async () => {
+                    setModalVisible(false);
+                    // Stop receive mode after successful address sharing
+                    stopHceOperation();
+                    
+                    // Refresh balances after address sharing (in case payment was received)
+                    console.log('🔄 Refreshing balances after address sharing...');
+                    try {
+                      await balanceService.getFormattedBalance(userAddress);
+                      await balanceService.getAllTokenBalances(userAddress);
+                      console.log('✅ Balances refreshed after address sharing');
+                    } catch (error) {
+                      console.error('❌ Error refreshing balances after address sharing:', error);
+                    }
+                  }
+                }
               ]
             );
             
@@ -424,7 +477,8 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       
       showModal('Payment Mode Started', 
         'Starting payment mode...\n\n' +
-        'Amount to send: ' + paymentAmount + ' MON\n\n' +
+        'Token: ' + selectedToken.symbol + '\n' +
+        'Amount to send: ' + paymentAmount + ' ' + selectedToken.symbol + '\n\n' +
         'Tap your phone near a receiving device to get their address.',
         [
           {
@@ -462,7 +516,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             for (const record of records) {
               console.log('📄 Record type:', record.type, 'TNF:', record.tnf);
               
-              if (record.tnf === Ndef.TNF_WELL_KNOWN && record.type[0] === 84) { // 'T' for text
+              if (record.tnf === 1 && record.type[0] === 84) { // TNF_WELL_KNOWN = 1, 'T' for text
                 // Text record - should contain Ethereum address
                 const textDecoder = new TextDecoder();
                 const payload = new Uint8Array(record.payload);
@@ -486,7 +540,8 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
               showModal('Payment Confirmation', 
                 'Recipient address found!\n\n' +
                 'Address: ' + recipientAddress + '\n' +
-                'Amount: ' + paymentAmount + ' MON\n\n' +
+                'Token: ' + selectedToken.symbol + '\n' +
+                'Amount: ' + paymentAmount + ' ' + selectedToken.symbol + '\n\n' +
                 'Do you want to proceed with the payment?',
                 [
                   {
@@ -499,7 +554,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
                   {
                     text: 'Send Payment',
                     onPress: async () => {
-                      await executePayment(userPrivateKey, recipientAddress, paymentAmount);
+                      await executePayment(userPrivateKey, recipientAddress, paymentAmount, selectedToken);
                     }
                   }
                 ]
@@ -543,13 +598,13 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
   };
 
   // Execute the actual payment
-  const executePayment = async (privateKey: string, recipientAddress: string, amount: string) => {
+  const executePayment = async (privateKey: string, recipientAddress: string, amount: string, token: Token) => {
     try {
       setModalVisible(false);
       setIsTransactionPending(true);
       
       showModal('Processing Payment', 
-        'Sending ' + amount + ' MON...\n\n' +
+        'Sending ' + amount + ' ' + token.symbol + '...\n\n' +
         'Please wait while the transaction is being processed.',
         []
       );
@@ -557,13 +612,14 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       console.log('💸 Executing payment...');
       console.log('📤 From: Private key available');
       console.log('📥 To: ' + recipientAddress);
-      console.log('💰 Amount: ' + amount + ' MON');
+      console.log('🪙 Token: ' + token.symbol);
+      console.log('💰 Amount: ' + amount + ' ' + token.symbol);
       
       // Show paying feedback
       showPayingFeedback();
       
-      // Send payment
-      const result = await paymentService.sendMonTokens(privateKey, recipientAddress, amount);
+      // Send payment using the unified token method
+      const result = await paymentService.sendTokens(privateKey, recipientAddress, amount, token);
       
       if (result.success && result.transactionHash) {
         setTransactionHash(result.transactionHash);
@@ -577,12 +633,33 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
         // Show success message
         showModal('🎉 PAYMENT SUCCESSFUL!', 
           'Payment sent successfully!\n\n' +
-          'Amount: ' + amount + ' MON\n' +
+          'Token: ' + token.symbol + '\n' +
+          'Amount: ' + amount + ' ' + token.symbol + '\n' +
           'To: ' + recipientAddress.slice(0, 6) + '...' + recipientAddress.slice(-4) + '\n' +
           'Transaction: ' + result.transactionHash.slice(0, 10) + '...\n\n' +
           'The transaction has been confirmed on the blockchain.',
           [
-            { text: 'OK', onPress: () => setModalVisible(false) }
+            { 
+              text: 'OK', 
+              onPress: async () => {
+                setModalVisible(false);
+                // Stop payment mode after successful transaction
+                stopNfcReading();
+                
+                // Refresh balances after successful payment
+                const userAddress = authService.getEthereumAddress();
+                if (userAddress && userAddress !== 'Invalid Address') {
+                  console.log('🔄 Refreshing balances after payment...');
+                  try {
+                    await balanceService.getFormattedBalance(userAddress);
+                    await balanceService.getAllTokenBalances(userAddress);
+                    console.log('✅ Balances refreshed after payment');
+                  } catch (error) {
+                    console.error('❌ Error refreshing balances after payment:', error);
+                  }
+                }
+              }
+            }
           ]
         );
       } else {
@@ -696,16 +773,35 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         <Text style={styles.helloWeb}>MON Payment & Receive 📱</Text>
         
+        {/* Token Selector */}
+        <View style={styles.tokenSelectorContainer}>
+          <Text style={styles.tokenSelectorLabel}>🪙 Select Token:</Text>
+          <TouchableOpacity 
+            style={styles.tokenSelectorButton}
+            onPress={() => setShowTokenSelector(true)}
+          >
+            <View style={styles.tokenSelectorButtonContent}>
+              <Text style={styles.tokenSelectorButtonText}>
+                {selectedToken.symbol}
+              </Text>
+              <Text style={styles.tokenSelectorButtonSubtext}>
+                {selectedToken.name}
+              </Text>
+            </View>
+            <Text style={styles.tokenSelectorArrow}>▼</Text>
+          </TouchableOpacity>
+        </View>
+        
         <TextInput
           style={styles.input}
-          placeholder="Enter amount of MON to send..."
+          placeholder={`Enter amount of ${selectedToken.symbol} to send...`}
           value={paymentAmount}
           onChangeText={setPaymentAmount}
           keyboardType="numeric"
         />
         
         {paymentAmount ? (
-          <Text style={styles.displayText}>Amount: {paymentAmount} MON</Text>
+          <Text style={styles.displayText}>Amount: {paymentAmount} {selectedToken.symbol}</Text>
         ) : null}
         
         {recipientAddress && (
@@ -720,7 +816,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             style={styles.buttonContainer}
             onPress={handlePay}
           >
-            <Text style={styles.button}>Pay MON</Text>
+            <Text style={styles.button}>Pay {selectedToken.symbol}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -753,64 +849,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
           </View>
         )}
         
-        {!hceSupported && !nfcSupported && (
-          <View style={styles.nfcStatusContainer}>
-            <Text style={styles.nfcStatus}>❌ NFC/HCE not supported on this device</Text>
-            <Text style={styles.nfcHelp}>This device doesn't support NFC or Host Card Emulation</Text>
-          </View>
-        )}
-        
-        {hceSupported && !isHceActive && (
-          <View style={styles.nfcStatusContainer}>
-            <Text style={styles.nfcStatus}>✅ Receive Ready!</Text>
-            <Text style={styles.nfcHelp}>Tap "Receive" to share your address</Text>
-          </View>
-        )}
-        
-        {nfcSupported && !isNfcReading && (
-          <View style={styles.nfcStatusContainer}>
-            <Text style={styles.nfcStatus}>✅ Pay Ready!</Text>
-            <Text style={styles.nfcHelp}>Enter amount and tap "Pay MON" to send payment</Text>
-          </View>
-        )}
-        
-        {hceSupported && isHceActive && hceOperation === 'receiving' && (
-          <View style={[styles.nfcStatusContainer, styles.nfcSharingContainer]}>
-            <Text style={[styles.nfcStatus, styles.nfcSharingStatus]}>📤 RECEIVE MODE ACTIVE!</Text>
-            <Text style={styles.nfcSharingHelp}>Your phone is sharing your address for payment</Text>
-            <View style={styles.nfcPulseIndicator}>
-              <Text style={styles.nfcPulseText}>📤</Text>
-            </View>
-            <TouchableOpacity style={styles.stopButton} onPress={stopHceOperation}>
-              <Text style={styles.stopButtonText}>🛑 Stop Receiving</Text>
-            </TouchableOpacity>
-          </View>
-        )}
 
-        {nfcSupported && isNfcReading && nfcOperation === 'paying' && (
-          <View style={[styles.nfcStatusContainer, styles.nfcReceivingContainer]}>
-            <Text style={[styles.nfcStatus, styles.nfcReceivingStatus]}>📥 PAYMENT MODE ACTIVE!</Text>
-            <Text style={styles.nfcReceivingHelp}>Tap your phone near a receiving device</Text>
-            <View style={styles.nfcPulseIndicator}>
-              <Text style={styles.nfcPulseText}>📥</Text>
-            </View>
-            <TouchableOpacity style={styles.stopButton} onPress={stopNfcReading}>
-              <Text style={styles.stopButtonText}>🛑 Stop Payment</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        
-        <View style={styles.nfcInfoContainer}>
-          <Text style={styles.nfcInfo}>
-            📱 Device: {hceSupported ? 'HCE Capable' : 'No HCE'} | {nfcSupported ? 'NFC Capable' : 'No NFC'}
-          </Text>
-          <Text style={styles.nfcInfo}>
-            🔧 Status: {hceSupported ? (isHceActive ? 'HCE ACTIVE' : 'HCE Ready') : 'HCE Unavailable'} | {nfcSupported ? (isNfcReading ? 'NFC ACTIVE' : 'NFC Ready') : 'NFC Unavailable'}
-          </Text>
-          <Text style={styles.nfcInfo}>
-            🏷️ Mode: MON Payment + Address Sharing
-          </Text>
-        </View>
       </ScrollView>
       
       {/* Custom Modal Popup */}
@@ -835,6 +874,49 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Token Selector Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showTokenSelector}
+        onRequestClose={() => setShowTokenSelector(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.tokenSelectorModalContent]}>
+            <Text style={styles.modalTitle}>🪙 Select Token</Text>
+            <ScrollView style={styles.tokenListContainer} showsVerticalScrollIndicator={false}>
+              {MONAD_TESTNET_TOKENS.map((token) => (
+                <TouchableOpacity
+                  key={token.symbol}
+                  style={[
+                    styles.tokenItem,
+                    selectedToken.symbol === token.symbol && styles.tokenItemSelected
+                  ]}
+                  onPress={() => {
+                    setSelectedToken(token);
+                    setShowTokenSelector(false);
+                  }}
+                >
+                  <View style={styles.tokenItemContent}>
+                    <Text style={styles.tokenSymbol}>{token.symbol}</Text>
+                    <Text style={styles.tokenName}>{token.name}</Text>
+                  </View>
+                  {selectedToken.symbol === token.symbol && (
+                    <Text style={styles.tokenSelectedCheck}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setShowTokenSelector(false)}
+            >
+              <Text style={styles.modalButtonText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1184,5 +1266,91 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
     fontFamily: 'monospace',
+  },
+  tokenSelectorContainer: {
+    marginBottom: 15,
+  },
+  tokenSelectorLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  tokenSelectorButton: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    borderRadius: 8,
+    padding: 15,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tokenSelectorButtonContent: {
+    flex: 1,
+  },
+  tokenSelectorButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  tokenSelectorButtonSubtext: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  tokenSelectorArrow: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: 'bold',
+  },
+  tokenSelectorModalContent: {
+    maxHeight: '60%',
+    width: '90%',
+  },
+  tokenListContainer: {
+    maxHeight: 300,
+    marginVertical: 10,
+  },
+  tokenItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+    backgroundColor: 'white',
+    minHeight: 50,
+  },
+  tokenItemSelected: {
+    backgroundColor: '#e3f2fd',
+    borderLeftWidth: 4,
+    borderLeftColor: '#007AFF',
+  },
+  tokenItemContent: {
+    flex: 1,
+  },
+  tokenSymbol: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  tokenName: {
+    fontSize: 11,
+    color: '#666',
+    marginTop: 1,
+  },
+  tokenSelectedCheck: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: 'bold',
   },
 });
