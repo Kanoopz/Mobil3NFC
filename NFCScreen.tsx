@@ -6,6 +6,8 @@ import {
   NFCTagType4,
 } from 'react-native-hce';
 import NfcManager, { NfcTech, Ndef } from 'react-native-nfc-manager';
+import AuthService from './AuthService';
+import BalanceService from './services/BalanceService';
 
 interface NFCScreenProps {
   onBack: () => void;
@@ -36,6 +38,27 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
   const [sendAnimation] = useState(new Animated.Value(0));
   const [receiveAnimation] = useState(new Animated.Value(0));
   const [completeAnimation] = useState(new Animated.Value(0));
+
+  const authService = AuthService.getInstance();
+  const balanceService = BalanceService.getInstance();
+
+  // Log user address and check balance when NFC screen loads
+  useEffect(() => {
+    const ethereumAddress = authService.getEthereumAddress();
+    if (ethereumAddress && ethereumAddress !== 'Invalid Address') {
+      console.log('👤 NFC Screen - User Address:', ethereumAddress);
+      console.log('🔗 NFC Screen - Short Address:', authService.getShortEthereumAddress());
+      
+      // Check MON balance
+      balanceService.getFormattedBalance(ethereumAddress).then(balance => {
+        console.log(`💰 NFC Screen - MON Balance: ${balance}`);
+      }).catch(error => {
+        console.error('❌ NFC Screen - Error checking balance:', error);
+      });
+    } else {
+      console.log('❌ NFC Screen - No valid Ethereum address found');
+    }
+  }, []);
 
   // Helper function to show modals
   const showModal = (title: string, message: string, buttons: Array<{text: string, onPress: () => void}>) => {
@@ -525,6 +548,14 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       <TouchableOpacity style={styles.backButton} onPress={onBack}>
         <Text style={styles.backButtonText}>← Back</Text>
       </TouchableOpacity>
+
+      {/* Ethereum Address Display */}
+      {authService.getEthereumAddress() && (
+        <View style={styles.addressContainer}>
+          <Text style={styles.addressLabel}>🔗 Your Wallet:</Text>
+          <Text style={styles.addressText}>{authService.getShortEthereumAddress()}</Text>
+        </View>
+      )}
 
       {/* Visual feedback overlays */}
       {isSending && (
@@ -1090,5 +1121,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  addressContainer: {
+    backgroundColor: '#f8f9fa',
+    borderColor: '#007AFF',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  addressLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginBottom: 5,
+  },
+  addressText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    fontFamily: 'monospace',
   },
 });

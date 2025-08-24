@@ -1,6 +1,7 @@
 const express = require('express');
 const nodemailer = require('nodemailer');
 const cors = require('cors');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = 3000;
@@ -9,8 +10,9 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
-// Store verification codes (in production, use a database)
+// Simple in-memory database
 const verificationCodes = new Map();
+const userDatabase = new Map(); // Store user data and private keys
 
 // Create email transporter using Gmail
 const transporter = nodemailer.createTransport({
@@ -24,6 +26,36 @@ const transporter = nodemailer.createTransport({
 // Generate verification code
 function generateVerificationCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// Generate private key for user
+function generatePrivateKey() {
+  return crypto.randomBytes(32).toString('hex'); // 64 character hex string
+}
+
+// Get or create user data
+function getUserData(email) {
+  if (!userDatabase.has(email)) {
+    // First time user - create new entry
+    const userData = {
+      email: email,
+      privateKey: generatePrivateKey(),
+      firstLogin: new Date().toISOString(),
+      lastLogin: new Date().toISOString(),
+      loginCount: 1
+    };
+    userDatabase.set(email, userData);
+    console.log(`🔑 Generated new private key for ${email}: ${userData.privateKey}`);
+    return userData;
+  } else {
+    // Returning user - update login info
+    const userData = userDatabase.get(email);
+    userData.lastLogin = new Date().toISOString();
+    userData.loginCount += 1;
+    userDatabase.set(email, userData);
+    console.log(`👋 Welcome back ${email}! Login count: ${userData.loginCount}`);
+    return userData;
+  }
 }
 
 // Send verification email
@@ -92,7 +124,7 @@ app.post('/api/send-verification', async (req, res) => {
   }
 });
 
-// Verify code
+// Verify code and get user data
 app.post('/api/verify-code', (req, res) => {
   try {
     const { email, code } = req.body;
@@ -117,11 +149,23 @@ app.post('/api/verify-code', (req, res) => {
       // Remove the code after successful verification
       verificationCodes.delete(email);
       
+      // Get or create user data (this will generate private key for first-time users)
+      const userData = getUserData(email);
+      
       console.log(`✅ Code verified successfully for ${email}`);
+      console.log(`🔑 User private key: ${userData.privateKey}`);
       
       res.json({ 
         success: true, 
-        message: 'Verification successful!' 
+        message: 'Verification successful!',
+        data: {
+          email: userData.email,
+          privateKey: userData.privateKey,
+          isFirstLogin: userData.loginCount === 1,
+          loginCount: userData.loginCount,
+          firstLogin: userData.firstLogin,
+          lastLogin: userData.lastLogin
+        }
       });
     } else {
       res.json({ 
@@ -139,9 +183,72 @@ app.post('/api/verify-code', (req, res) => {
   }
 });
 
+// Get user data (for returning users)
+app.get('/api/user/:email', (req, res) => {
+  try {
+    const { email } = req.params;
+    
+    if (!userDatabase.has(email)) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    const userData = userDatabase.get(email);
+    
+    res.json({ 
+      success: true, 
+      data: {
+        email: userData.email,
+        privateKey: userData.privateKey,
+        loginCount: userData.loginCount,
+        firstLogin: userData.firstLogin,
+        lastLogin: userData.lastLogin
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting user data:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error getting user data' 
+    });
+  }
+});
+
+// Get all users (for debugging)
+app.get('/api/users', (req, res) => {
+  try {
+    const users = Array.from(userDatabase.values()).map(user => ({
+      email: user.email,
+      loginCount: user.loginCount,
+      firstLogin: user.firstLogin,
+      lastLogin: user.lastLogin
+    }));
+    
+    res.json({ 
+      success: true, 
+      data: users 
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting users:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error getting users' 
+    });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Email verification server is running' });
+  res.json({ 
+    status: 'OK', 
+    message: 'Email verification server is running',
+    userCount: userDatabase.size,
+    activeCodes: verificationCodes.size
+  });
 });
 
 // Start server
@@ -149,6 +256,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Email verification server running on http://localhost:${PORT}`);
   console.log(`📧 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🌐 Network access: http://192.168.100.201:${PORT}/api/health`);
+  console.log(`👥 User database initialized (${userDatabase.size} users)`);
 });
 
 module.exports = app;

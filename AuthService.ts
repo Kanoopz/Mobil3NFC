@@ -1,10 +1,23 @@
 // Real authentication service for Expo/React Native
-// Uses local Express backend to send real verification codes
+// Uses local Express backend to send real verification codes and manage user data
+import { ethers } from 'ethers';
 
 interface AuthState {
   isAuthenticated: boolean;
   email: string | null;
   verificationCode: string | null;
+  privateKey: string | null;
+  userData: UserData | null;
+  ethereumAddress: string | null;
+}
+
+interface UserData {
+  email: string;
+  privateKey: string;
+  isFirstLogin: boolean;
+  loginCount: number;
+  firstLogin: string;
+  lastLogin: string;
 }
 
 interface AuthResponse {
@@ -19,6 +32,9 @@ class AuthService {
     isAuthenticated: false,
     email: null,
     verificationCode: null,
+    privateKey: null,
+    userData: null,
+    ethereumAddress: null,
   };
 
   // Local backend configuration
@@ -31,6 +47,36 @@ class AuthService {
       AuthService.instance = new AuthService();
     }
     return AuthService.instance;
+  }
+
+  // Derive Ethereum address from private key
+  private deriveEthereumAddress(privateKey: string): string {
+    try {
+      // Ensure private key has 0x prefix
+      const formattedKey = privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`;
+      
+      // Create wallet from private key
+      const wallet = new ethers.Wallet(formattedKey);
+      
+      // Get the address
+      const address = wallet.address;
+      
+      console.log(`🔗 Derived Ethereum address: ${address} from private key`);
+      
+      return address;
+    } catch (error) {
+      console.error('❌ Error deriving Ethereum address:', error);
+      return 'Invalid Address';
+    }
+  }
+
+  // Get short version of Ethereum address
+  getShortAddress(address: string): string {
+    if (!address || address === 'Invalid Address') {
+      return 'Invalid Address';
+    }
+    
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
   }
 
   // Send verification code using local backend
@@ -62,7 +108,7 @@ class AuthService {
   }
 
   // Verify code using local backend
-  private async verifyCodeWithBackend(email: string, code: string): Promise<boolean> {
+  private async verifyCodeWithBackend(email: string, code: string): Promise<{success: boolean, data?: UserData, message: string}> {
     try {
       console.log(`🔍 Verifying code for ${email}`);
       
@@ -78,14 +124,15 @@ class AuthService {
       
       if (result.success) {
         console.log('✅ Code verified successfully');
-        return true;
+        console.log('🔑 User data received:', result.data);
+        return { success: true, data: result.data, message: result.message };
       } else {
         console.error('❌ Code verification failed:', result.message);
-        return false;
+        return { success: false, message: result.message };
       }
     } catch (error) {
       console.error('❌ Error verifying code:', error);
-      return false;
+      return { success: false, message: 'Error verifying code' };
     }
   }
 
@@ -133,18 +180,53 @@ class AuthService {
       }
 
       // Verify code via backend
-      const isValid = await this.verifyCodeWithBackend(this.authState.email, code.trim());
+      const result = await this.verifyCodeWithBackend(this.authState.email, code.trim());
       
-      if (isValid) {
+      if (result.success && result.data) {
         this.authState.isAuthenticated = true;
-        return { success: true, message: 'Verification successful! Welcome to the app.' };
+        this.authState.privateKey = result.data.privateKey;
+        this.authState.userData = result.data;
+        
+        // Derive Ethereum address from private key
+        const ethereumAddress = this.deriveEthereumAddress(result.data.privateKey);
+        this.authState.ethereumAddress = ethereumAddress;
+        
+        const loginMessage = result.data.isFirstLogin 
+          ? 'Welcome! Your account has been created with a new private key.'
+          : `Welcome back! This is your ${result.data.loginCount}${this.getOrdinalSuffix(result.data.loginCount)} login.`;
+        
+        return { 
+          success: true, 
+          message: `Verification successful! ${loginMessage}`,
+          data: {
+            ...result.data,
+            ethereumAddress: ethereumAddress,
+            shortAddress: this.getShortAddress(ethereumAddress)
+          }
+        };
       } else {
-        return { success: false, message: 'Invalid verification code. Please try again.' };
+        return { success: false, message: result.message };
       }
     } catch (error) {
       console.error('Error verifying code:', error);
       return { success: false, message: 'An error occurred. Please try again.' };
     }
+  }
+
+  // Get ordinal suffix for numbers
+  private getOrdinalSuffix(num: number): string {
+    const j = num % 10;
+    const k = num % 100;
+    if (j == 1 && k != 11) {
+      return "st";
+    }
+    if (j == 2 && k != 12) {
+      return "nd";
+    }
+    if (j == 3 && k != 13) {
+      return "rd";
+    }
+    return "th";
   }
 
   // Quick access mode (bypasses email verification for development)
@@ -187,12 +269,35 @@ class AuthService {
     return this.authState.email;
   }
 
+  // Get user's private key
+  getPrivateKey(): string | null {
+    return this.authState.privateKey;
+  }
+
+  // Get user's Ethereum address
+  getEthereumAddress(): string | null {
+    return this.authState.ethereumAddress;
+  }
+
+  // Get short version of user's Ethereum address
+  getShortEthereumAddress(): string {
+    return this.authState.ethereumAddress ? this.getShortAddress(this.authState.ethereumAddress) : 'No Address';
+  }
+
+  // Get user data
+  getUserData(): UserData | null {
+    return this.authState.userData;
+  }
+
   // Logout
   logout(): void {
     this.authState = {
       isAuthenticated: false,
       email: null,
       verificationCode: null,
+      privateKey: null,
+      userData: null,
+      ethereumAddress: null,
     };
     console.log('👋 User logged out');
   }

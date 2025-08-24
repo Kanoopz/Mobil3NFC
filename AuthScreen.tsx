@@ -66,7 +66,18 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
       const result = await authService.verifyCode(verificationCode.trim());
       
       if (result.success) {
-        Alert.alert('Success', result.message, [
+        const userData = result.data;
+        let message = result.message;
+        
+        if (userData) {
+          if (userData.isFirstLogin) {
+            message += `\n\n✅ Account created successfully!`;
+          } else {
+            message += `\n\n✅ Welcome back!`;
+          }
+        }
+        
+        Alert.alert('Success', message, [
           {
             text: 'Go to NFC',
             onPress: onAuthSuccess

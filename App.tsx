@@ -3,13 +3,17 @@ import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native';
 import NFCScreen from './NFCScreen';
 import AuthScreen from './AuthScreen';
 import AuthService from './AuthService';
+import BalanceService from './services/BalanceService';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'auth' | 'base' | 'nfc'>('auth');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [monBalance, setMonBalance] = useState<string>('Loading...');
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false);
 
   const authService = AuthService.getInstance();
+  const balanceService = BalanceService.getInstance();
 
   // Check authentication status on app start
   useEffect(() => {
@@ -25,8 +29,41 @@ export default function App() {
     
     if (authenticated) {
       setCurrentScreen('base');
+      // Log user address and check balance
+      logUserAddressAndCheckBalance();
     } else {
       setCurrentScreen('auth');
+    }
+  };
+
+  const logUserAddressAndCheckBalance = async () => {
+    const ethereumAddress = authService.getEthereumAddress();
+    if (ethereumAddress && ethereumAddress !== 'Invalid Address') {
+      console.log('👤 User Address:', ethereumAddress);
+      console.log('🔗 Short Address:', authService.getShortEthereumAddress());
+      
+      // Check MON balance
+      await checkMonBalance(ethereumAddress);
+    } else {
+      console.log('❌ No valid Ethereum address found for user');
+      setMonBalance('No address available');
+    }
+  };
+
+  const checkMonBalance = async (address: string) => {
+    try {
+      setIsLoadingBalance(true);
+      setMonBalance('Checking...');
+      
+      const balance = await balanceService.getFormattedBalance(address);
+      setMonBalance(balance);
+      
+      console.log(`💰 MON Balance for ${authService.getShortEthereumAddress()}: ${balance}`);
+    } catch (error) {
+      console.error('❌ Error checking MON balance:', error);
+      setMonBalance('Error fetching balance');
+    } finally {
+      setIsLoadingBalance(false);
     }
   };
 
@@ -34,6 +71,8 @@ export default function App() {
     setIsAuthenticated(true);
     setUserEmail(authService.getEmail());
     setCurrentScreen('base');
+    // Log user address and check balance after successful auth
+    logUserAddressAndCheckBalance();
   };
 
   const handleNFCClick = () => {
@@ -81,9 +120,19 @@ export default function App() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.welcomeText}>
-          Welcome, {userEmail ? userEmail.split('@')[0] : 'User'}!
-        </Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.welcomeText}>
+            Welcome, {userEmail ? userEmail.split('@')[0] : 'User'}!
+          </Text>
+          {authService.getEthereumAddress() && (
+            <Text style={styles.addressText}>
+              {authService.getShortEthereumAddress()}
+            </Text>
+          )}
+          <Text style={styles.balanceText}>
+            💰 {monBalance}
+          </Text>
+        </View>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
@@ -98,6 +147,21 @@ export default function App() {
           onPress={handleNFCClick}
         >
           <Text style={styles.nfcButtonText}>NFC</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.refreshButton}
+          onPress={() => {
+            const address = authService.getEthereumAddress();
+            if (address && address !== 'Invalid Address') {
+              checkMonBalance(address);
+            }
+          }}
+          disabled={isLoadingBalance}
+        >
+          <Text style={styles.refreshButtonText}>
+            {isLoadingBalance ? '🔄 Refreshing...' : '🔄 Refresh Balance'}
+          </Text>
         </TouchableOpacity>
         
         <Text style={styles.description}>
@@ -124,10 +188,24 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
+  headerLeft: {
+    flex: 1,
+  },
   welcomeText: {
     fontSize: 16,
     color: '#333',
     fontWeight: '500',
+  },
+  addressText: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 5,
+  },
+  balanceText: {
+    fontSize: 12,
+    color: '#007AFF',
+    marginTop: 3,
+    fontWeight: '600',
   },
   logoutButton: {
     backgroundColor: '#dc3545',
@@ -178,6 +256,27 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 24,
     fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  refreshButton: {
+    backgroundColor: '#28a745',
+    paddingHorizontal: 30,
+    paddingVertical: 12,
+    borderRadius: 25,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  refreshButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
     textAlign: 'center',
   },
   description: {

@@ -13,6 +13,7 @@
     "@react-native-firebase/app": "^23.1.1",
     "@react-native-firebase/auth": "^23.1.1",
     "cors": "^2.8.5",
+    "ethers": "^6.15.0",
     "expo": "~53.0.22",
     "expo-dev-client": "~5.2.4",
     "expo-status-bar": "~2.2.3",
