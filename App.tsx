@@ -32,7 +32,7 @@ export default function App() {
       setCurrentScreen('base');
       // Log user address and check balance
       logUserAddressAndCheckBalance();
-    } else {
+        } else {
       setCurrentScreen('auth');
     }
   };
@@ -109,15 +109,15 @@ export default function App() {
     Alert.alert(
       'Logout',
       'Are you sure you want to logout?',
-      [
-        {
-          text: 'Cancel',
+          [
+            {
+              text: 'Cancel',
           style: 'cancel',
         },
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: () => {
+                        onPress: () => {
             authService.logout();
             setIsAuthenticated(false);
             setUserEmail(null);
@@ -149,15 +149,15 @@ export default function App() {
           {authService.getEthereumAddress() && (
             <Text style={styles.addressText}>
               {authService.getShortEthereumAddress()}
-            </Text>
+              </Text>
           )}
           <Text style={styles.balanceText}>
             💰 {monBalance}
-          </Text>
+              </Text>
         </View>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutButtonText}>Logout</Text>
-        </TouchableOpacity>
+            </TouchableOpacity>
       </View>
 
       {/* Token Balances Section */}
@@ -179,17 +179,17 @@ export default function App() {
           </View>
         </View>
       )}
-
+      
       <View style={styles.content}>
         <Text style={styles.title}>Mobil3 NFC App</Text>
         <Text style={styles.subtitle}>Welcome to the NFC Reader & Emulator</Text>
         
-        <TouchableOpacity 
+          <TouchableOpacity 
           style={styles.nfcButton}
           onPress={handleNFCClick}
-        >
+          >
           <Text style={styles.nfcButtonText}>NFC</Text>
-        </TouchableOpacity>
+          </TouchableOpacity>
 
         <TouchableOpacity 
           style={styles.refreshButton}
@@ -209,8 +209,8 @@ export default function App() {
         
         <Text style={styles.description}>
           Tap the NFC button to access the full NFC functionality including reading and emulating NFC tags.
-        </Text>
-      </View>
+          </Text>
+        </View>
     </View>
   );
 }

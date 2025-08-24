@@ -780,14 +780,9 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             style={styles.tokenSelectorButton}
             onPress={() => setShowTokenSelector(true)}
           >
-            <View style={styles.tokenSelectorButtonContent}>
-              <Text style={styles.tokenSelectorButtonText}>
-                {selectedToken.symbol}
-              </Text>
-              <Text style={styles.tokenSelectorButtonSubtext}>
-                {selectedToken.name}
-              </Text>
-            </View>
+            <Text style={styles.tokenSelectorButtonText}>
+              {selectedToken.symbol} - {selectedToken.name}
+            </Text>
             <Text style={styles.tokenSelectorArrow}>▼</Text>
           </TouchableOpacity>
         </View>
@@ -878,7 +873,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
         </View>
       </Modal>
 
-      {/* Token Selector Modal */}
+      {/* Token Selector Dropdown Modal */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -886,31 +881,30 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
         onRequestClose={() => setShowTokenSelector(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, styles.tokenSelectorModalContent]}>
+          <View style={styles.simpleTokenModal}>
             <Text style={styles.modalTitle}>🪙 Select Token</Text>
-            <ScrollView style={styles.tokenListContainer} showsVerticalScrollIndicator={false}>
+            <View style={styles.simpleTokenList}>
               {MONAD_TESTNET_TOKENS.map((token) => (
                 <TouchableOpacity
                   key={token.symbol}
                   style={[
-                    styles.tokenItem,
-                    selectedToken.symbol === token.symbol && styles.tokenItemSelected
+                    styles.simpleTokenItem,
+                    selectedToken.symbol === token.symbol && styles.simpleTokenItemSelected
                   ]}
                   onPress={() => {
                     setSelectedToken(token);
                     setShowTokenSelector(false);
                   }}
                 >
-                  <View style={styles.tokenItemContent}>
-                    <Text style={styles.tokenSymbol}>{token.symbol}</Text>
-                    <Text style={styles.tokenName}>{token.name}</Text>
-                  </View>
+                  <Text style={styles.simpleTokenText}>
+                    {token.symbol} - {token.name}
+                  </Text>
                   {selectedToken.symbol === token.symbol && (
-                    <Text style={styles.tokenSelectedCheck}>✓</Text>
+                    <Text style={styles.simpleTokenCheck}>✓</Text>
                   )}
                 </TouchableOpacity>
               ))}
-            </ScrollView>
+            </View>
             <TouchableOpacity
               style={styles.modalButton}
               onPress={() => setShowTokenSelector(false)}
@@ -920,6 +914,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
           </View>
         </View>
       </Modal>
+
     </View>
   );
 }
@@ -1268,88 +1263,62 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
   },
   tokenSelectorContainer: {
-    marginBottom: 15,
+    marginBottom: 20,
   },
   tokenSelectorLabel: {
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   tokenSelectorButton: {
     backgroundColor: '#f8f9fa',
     borderWidth: 1,
     borderColor: '#007AFF',
     borderRadius: 8,
-    padding: 15,
+    padding: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  tokenSelectorButtonContent: {
-    flex: 1,
   },
   tokenSelectorButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
   },
-  tokenSelectorButtonSubtext: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 2,
-  },
   tokenSelectorArrow: {
     fontSize: 16,
     color: '#007AFF',
     fontWeight: 'bold',
   },
-  tokenSelectorModalContent: {
-    maxHeight: '60%',
+  simpleTokenModal: {
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 20,
+    margin: 20,
+    maxHeight: '80%',
     width: '90%',
   },
-  tokenListContainer: {
-    maxHeight: 300,
-    marginVertical: 10,
+  simpleTokenList: {
+    marginVertical: 15,
   },
-  tokenItem: {
+  simpleTokenItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-    backgroundColor: 'white',
-    minHeight: 50,
   },
-  tokenItemSelected: {
+  simpleTokenItemSelected: {
     backgroundColor: '#e3f2fd',
-    borderLeftWidth: 4,
-    borderLeftColor: '#007AFF',
   },
-  tokenItemContent: {
-    flex: 1,
-  },
-  tokenSymbol: {
-    fontSize: 14,
-    fontWeight: 'bold',
+  simpleTokenText: {
+    fontSize: 16,
     color: '#333',
   },
-  tokenName: {
-    fontSize: 11,
-    color: '#666',
-    marginTop: 1,
-  },
-  tokenSelectedCheck: {
-    fontSize: 16,
+  simpleTokenCheck: {
+    fontSize: 18,
     color: '#007AFF',
     fontWeight: 'bold',
   },
