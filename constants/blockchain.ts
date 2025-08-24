@@ -137,6 +137,14 @@ export const MONAD_TESTNET_TOKENS: Token[] = [
     address: "0xcf5a6076cfa32686c0Df13aBaDa2b40dec133F1d",
     logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599/logo.png",
   },
+  {
+    chainId: 10143,
+    name: "Pingu",
+    symbol: "PINGU",
+    decimals: 18,
+    address: "0xA2426cD97583939E79Cfc12aC6E9121e37D0904d",
+    logoURI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png",
+  },
 ];
 
 // Token utility functions

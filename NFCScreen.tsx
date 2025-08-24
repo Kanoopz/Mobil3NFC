@@ -8,39 +8,41 @@ import {
 import NfcManager, { NfcTech, Ndef } from 'react-native-nfc-manager';
 import AuthService from './AuthService';
 import BalanceService from './services/BalanceService';
+import PaymentService from './services/PaymentService';
 
 interface NFCScreenProps {
   onBack: () => void;
 }
 
 export default function NFCScreen({ onBack }: NFCScreenProps) {
-  const [inputText, setInputText] = useState('');
-  const [sharedText, setSharedText] = useState('NOTHING');
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [recipientAddress, setRecipientAddress] = useState('');
   const [hceSupported, setHceSupported] = useState(false);
   const [nfcSupported, setNfcSupported] = useState(false);
   const [isHceActive, setIsHceActive] = useState(false);
   const [isNfcReading, setIsNfcReading] = useState(false);
-  const [hceOperation, setHceOperation] = useState<'none' | 'emulating'>('none');
-  const [nfcOperation, setNfcOperation] = useState<'none' | 'reading'>('none');
+  const [hceOperation, setHceOperation] = useState<'none' | 'receiving'>('none');
+  const [nfcOperation, setNfcOperation] = useState<'none' | 'paying'>('none');
   const [modalVisible, setModalVisible] = useState(false);
   const [modalTitle, setModalTitle] = useState('');
   const [modalMessage, setModalMessage] = useState('');
   const [modalButtons, setModalButtons] = useState<Array<{text: string, onPress: () => void}>>([]);
-  const [lastSavedText, setLastSavedText] = useState<string>('');
-  const [receivedData, setReceivedData] = useState<Array<{text: string, timestamp: string}>>([]);
+  const [transactionHash, setTransactionHash] = useState<string>('');
+  const [isTransactionPending, setIsTransactionPending] = useState(false);
   const [session, setSession] = useState<HCESession | null>(null);
   
   // Visual feedback states
-  const [isSending, setIsSending] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
   const [isReceiving, setIsReceiving] = useState(false);
   const [isTransferComplete, setIsTransferComplete] = useState(false);
-  const [transferType, setTransferType] = useState<'sending' | 'receiving' | null>(null);
-  const [sendAnimation] = useState(new Animated.Value(0));
+  const [transferType, setTransferType] = useState<'paying' | 'receiving' | null>(null);
+  const [payAnimation] = useState(new Animated.Value(0));
   const [receiveAnimation] = useState(new Animated.Value(0));
   const [completeAnimation] = useState(new Animated.Value(0));
 
   const authService = AuthService.getInstance();
   const balanceService = BalanceService.getInstance();
+  const paymentService = PaymentService.getInstance();
 
   // Log user address and check balance when NFC screen loads
   useEffect(() => {
@@ -55,9 +57,69 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       }).catch(error => {
         console.error('❌ NFC Screen - Error checking balance:', error);
       });
+
+      // Check all token balances
+      balanceService.getAllTokenBalances(ethereumAddress).then(balances => {
+        console.log('🪙 NFC Screen - Token Balances:');
+        balances.forEach(balance => {
+          console.log(`  ${balance.symbol}: ${balance.balanceFormatted}`);
+        });
+      }).catch(error => {
+        console.error('❌ NFC Screen - Error checking token balances:', error);
+      });
     } else {
       console.log('❌ NFC Screen - No valid Ethereum address found');
     }
+  }, []);
+
+  // Monitor transaction changes
+  useEffect(() => {
+    if (transactionHash) {
+      console.log('🔄 TRANSACTION HASH CHANGED:', transactionHash);
+    }
+  }, [transactionHash]);
+
+  // Initialize NFC and HCE
+  useEffect(() => {
+    const initNFC = async () => {
+      try {
+        const isSupported = await NfcManager.isSupported();
+        setNfcSupported(isSupported);
+        
+        if (isSupported) {
+          await NfcManager.start();
+          console.log('✅ NFC initialized successfully');
+        }
+      } catch (error) {
+        console.error('❌ NFC initialization failed:', error);
+        setNfcSupported(false);
+      }
+    };
+
+    const initHCE = async () => {
+      try {
+        if (Platform.OS === 'android') {
+          const hceSession = await HCESession.getInstance();
+          setSession(hceSession);
+          setHceSupported(true);
+          console.log('✅ HCE initialized successfully');
+        } else {
+          setHceSupported(false);
+          console.log('❌ HCE not supported on this platform');
+        }
+      } catch (error) {
+        console.error('❌ HCE initialization failed:', error);
+        setHceSupported(false);
+      }
+    };
+
+    initNFC();
+    initHCE();
+
+    return () => {
+      NfcManager.unregisterTagEvent();
+      NfcManager.cancelTechnologyRequest();
+    };
   }, []);
 
   // Helper function to show modals
@@ -69,21 +131,21 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
   };
 
   // Visual feedback functions
-  const showSendingFeedback = () => {
-    setIsSending(true);
+  const showPayingFeedback = () => {
+    setIsPaying(true);
     Animated.sequence([
-      Animated.timing(sendAnimation, {
+      Animated.timing(payAnimation, {
         toValue: 1,
         duration: 300,
         useNativeDriver: false,
       }),
-      Animated.timing(sendAnimation, {
+      Animated.timing(payAnimation, {
         toValue: 0,
         duration: 300,
         useNativeDriver: false,
       }),
     ]).start(() => {
-      setIsSending(false);
+      setIsPaying(false);
     });
   };
 
@@ -105,7 +167,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
     });
   };
 
-  const showTransferComplete = (type: 'sending' | 'receiving') => {
+  const showTransferComplete = (type: 'paying' | 'receiving') => {
     setTransferType(type);
     setIsTransferComplete(true);
     Animated.timing(completeAnimation, {
@@ -113,6 +175,11 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       duration: 500,
       useNativeDriver: false,
     }).start();
+    
+    // Auto-hide after 1.5 seconds
+    setTimeout(() => {
+      hideTransferComplete();
+    }, 1500);
   };
 
   const hideTransferComplete = () => {
@@ -126,67 +193,6 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
     });
   };
 
-  // Initialize NFC and HCE
-  useEffect(() => {
-    const initNfc = async () => {
-      try {
-        // Initialize NFC Manager
-        await NfcManager.start();
-        const isSupported = await NfcManager.isSupported();
-        setNfcSupported(isSupported);
-        
-        if (isSupported) {
-          console.log('NFC Supported');
-        } else {
-          console.log('NFC not supported');
-        }
-      } catch (error) {
-        console.log('NFC Error:', error);
-        setNfcSupported(false);
-      }
-    };
-
-    const initHce = async () => {
-      try {
-        // Check if HCE is supported (Android API 21+)
-        if (Platform.OS === 'android') {
-          setHceSupported(true);
-          console.log('HCE Supported on Android');
-          
-          // Initialize HCE session
-          const hceSession = await HCESession.getInstance();
-          setSession(hceSession);
-          console.log('HCE Session initialized successfully');
-        } else {
-          setHceSupported(false);
-          console.log('HCE not supported on this platform');
-        }
-      } catch (error) {
-        console.log('HCE Error:', error);
-        setHceSupported(false);
-      }
-    };
-
-    initNfc();
-    initHce();
-
-    return () => {
-      // Cleanup
-      NfcManager.cancelTechnologyRequest().catch(() => {});
-      if (session) {
-        session.setEnabled(false).catch(console.error);
-      }
-    };
-  }, []);
-
-  // Monitor sharedText changes
-  useEffect(() => {
-    if (sharedText !== 'NOTHING') {
-      console.log('🔄 SHARED TEXT STATE CHANGED:', sharedText);
-      setLastSavedText(sharedText);
-    }
-  }, [sharedText]);
-
   // Function to stop HCE operation
   const stopHceOperation = async () => {
     try {
@@ -194,7 +200,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
         await session.setEnabled(false);
         setIsHceActive(false);
         setHceOperation('none');
-        showModal('HCE Stopped', 'HCE emulation has been stopped.', [
+        showModal('Receive Stopped', 'Receive mode has been stopped.', [
           { text: 'OK', onPress: () => setModalVisible(false) }
         ]);
       }
@@ -209,7 +215,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       await NfcManager.cancelTechnologyRequest();
       setIsNfcReading(false);
       setNfcOperation('none');
-      showModal('NFC Reading Stopped', 'NFC reading has been stopped.', [
+      showModal('Payment Stopped', 'Payment mode has been stopped.', [
         { text: 'OK', onPress: () => setModalVisible(false) }
       ]);
     } catch (error) {
@@ -217,9 +223,188 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
     }
   };
 
-  // Function to read NFC tags
-  const readNfcTag = async () => {
+  // Function to receive payment (share address via NFC)
+  const handleReceive = async () => {
+    console.log('=== RECEIVE FUNCTION STARTED ===');
+    console.log('HCE supported:', hceSupported);
+    console.log('HCE active:', isHceActive);
+    console.log('Session available:', !!session);
+    
+    if (isHceActive) {
+      showModal('Receive Busy', 'Receive mode is already active. Please stop the current operation first.', [
+        { text: 'OK', onPress: () => setModalVisible(false) }
+      ]);
+      return;
+    }
+
+    if (!hceSupported) {
+      showModal('HCE Not Available', 'Host Card Emulation is not supported on this device', [
+        { text: 'OK', onPress: () => setModalVisible(false) }
+      ]);
+      return;
+    }
+
+    if (!session) {
+      showModal('HCE Session Error', 'HCE session not available. Please restart the app.', [
+        { text: 'OK', onPress: () => setModalVisible(false) }
+      ]);
+      return;
+    }
+
+    const userAddress = authService.getEthereumAddress();
+    if (!userAddress || userAddress === 'Invalid Address') {
+      showModal('No Address', 'No valid Ethereum address found. Please login first.', [
+        { text: 'OK', onPress: () => setModalVisible(false) }
+      ]);
+      return;
+    }
+
+    try {
+      setIsHceActive(true);
+      setHceOperation('receiving');
+      
+      showModal('Receive Mode Started', 
+        'Starting receive mode...\n\n' +
+        'Your address will be shared: ' + userAddress + '\n\n' +
+        'Other devices can tap to get your address for payment.',
+        [
+          {
+            text: 'Cancel',
+            onPress: () => {
+              console.log('❌ User cancelled receive mode');
+              stopHceOperation();
+            }
+          }
+        ]
+      );
+
+      // Start HCE emulation with user address
+      setTimeout(async () => {
+        try {
+          console.log('🔄 Starting HCE receive mode...');
+          console.log('📤 Sharing address:', userAddress);
+          
+          // Create NFC Type 4 tag with the user address
+          const tag = new NFCTagType4({
+            type: NFCTagType4NDEFContentType.Text,
+            content: userAddress,
+            writable: false,
+          });
+          
+          console.log('✅ NFC Type 4 tag created with address');
+          
+          // Set the tag as the application for the HCE session
+          if (session) {
+            session.setApplication(tag);
+            console.log('✅ Tag set as HCE application');
+            
+            // Enable HCE emulation
+            await session.setEnabled(true);
+          } else {
+            throw new Error('HCE session not available');
+          }
+          console.log('✅ HCE receive mode enabled');
+          
+          setModalVisible(false);
+          
+          // Show ready popup
+          showModal('Receive Mode Ready', 
+            '✅ Receive mode is now active!\n\n' +
+            'Address: ' + userAddress + '\n\n' +
+            'Your phone is now sharing your address.\n' +
+            'Other devices can tap to get your address.\n\n' +
+            'Keep this screen open to maintain sharing.',
+            [
+              {
+                text: 'Stop Receiving',
+                onPress: () => {
+                  console.log('❌ User stopped receive mode');
+                  stopHceOperation();
+                }
+              }
+            ]
+          );
+          
+          // Set up event listener for when the tag is read
+          const removeListener = session.on(HCESession.Events.HCE_STATE_READ, () => {
+            console.log('📳 ADDRESS SHARED SUCCESSFULLY!');
+            console.log('⏰ Timestamp:', new Date().toISOString());
+            
+            // Show receiving feedback
+            showReceivingFeedback();
+            
+            // Show completion illumination
+            showTransferComplete('receiving');
+            
+            // Show success message
+            showModal('🎉 ADDRESS SHARED!', 
+              'Your address has been shared successfully!\n\n' +
+              'Address: ' + userAddress + '\n\n' +
+              'The other device can now send you MON tokens.',
+              [
+                { text: 'OK', onPress: () => setModalVisible(false) }
+              ]
+            );
+            
+            // Clean up listener
+            removeListener();
+          });
+          
+        } catch (error) {
+          console.error('❌ Error starting receive mode:', error);
+          setIsHceActive(false);
+          setHceOperation('none');
+          
+          showModal('❌ Receive Mode Failed', 
+            'Failed to start receive mode.\n\n' +
+            'Error: ' + (error instanceof Error ? error.message : 'Unknown error'),
+            [
+              { text: 'OK', onPress: () => setModalVisible(false) }
+            ]
+          );
+        }
+      }, 1000);
+    } catch (error) {
+      console.error('❌ Error starting receive mode:', error);
+      setIsHceActive(false);
+      setHceOperation('none');
+      
+      showModal('❌ Receive Error', 
+        'Failed to start receive mode.\n\n' +
+        'Error: ' + (error instanceof Error ? error.message : 'Unknown error'),
+        [
+          { text: 'OK', onPress: () => setModalVisible(false) }
+        ]
+      );
+    }
+  };
+
+  // Function to pay (read address and send MON)
+  const handlePay = async () => {
+    console.log('=== PAYMENT FUNCTION STARTED ===');
+    console.log('Payment amount:', paymentAmount);
+    console.log('NFC supported:', nfcSupported);
+    console.log('NFC reading:', isNfcReading);
+    
+    if (!paymentAmount.trim() || parseFloat(paymentAmount) <= 0) {
+      console.log('❌ Invalid payment amount');
+      showModal('Invalid Amount', 'Please enter a valid payment amount greater than 0!', [
+        { text: 'OK', onPress: () => setModalVisible(false) }
+      ]);
+      return;
+    }
+
+    const userPrivateKey = authService.getPrivateKey();
+    if (!userPrivateKey) {
+      console.log('❌ No private key available');
+      showModal('No Private Key', 'No private key found. Please login first.', [
+        { text: 'OK', onPress: () => setModalVisible(false) }
+      ]);
+      return;
+    }
+
     if (isNfcReading) {
+      console.log('❌ NFC already reading');
       showModal('NFC Busy', 'NFC is already reading. Please stop the current operation first.', [
         { text: 'OK', onPress: () => setModalVisible(false) }
       ]);
@@ -235,17 +420,17 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
 
     try {
       setIsNfcReading(true);
-      setNfcOperation('reading');
+      setNfcOperation('paying');
       
-      showModal('NFC Reading Started', 
-        'Starting NFC reading mode...\n\n' +
-        'Hold your phone near an NFC tag to read it.\n\n' +
-        'The app will automatically detect and read the tag.',
+      showModal('Payment Mode Started', 
+        'Starting payment mode...\n\n' +
+        'Amount to send: ' + paymentAmount + ' MON\n\n' +
+        'Tap your phone near a receiving device to get their address.',
         [
           {
             text: 'Cancel',
             onPress: () => {
-              console.log('❌ User cancelled NFC reading');
+              console.log('❌ User cancelled payment');
               stopNfcReading();
             }
           }
@@ -255,7 +440,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       // Start reading immediately
       setTimeout(async () => {
         try {
-          console.log('🔄 Starting NFC reading...');
+          console.log('🔄 Starting NFC reading for payment...');
           
           // Request NFC technology
           await NfcManager.requestTechnology(NfcTech.Ndef);
@@ -270,7 +455,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
           
           if (ndef && ndef.ndefMessage && Array.isArray(ndef.ndefMessage)) {
             const records = ndef.ndefMessage;
-            let readText = '';
+            let recipientAddress = '';
             
             console.log('📋 Processing', records.length, 'NDEF records');
             
@@ -278,268 +463,151 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
               console.log('📄 Record type:', record.type, 'TNF:', record.tnf);
               
               if (record.tnf === Ndef.TNF_WELL_KNOWN && record.type[0] === 84) { // 'T' for text
-                // Text record
+                // Text record - should contain Ethereum address
                 const textDecoder = new TextDecoder();
                 const payload = new Uint8Array(record.payload);
                 const text = textDecoder.decode(payload.slice(3)); // Skip language code
-                readText += text + '\n';
-                console.log('📝 Text record found:', text);
-              } else if (record.tnf === Ndef.TNF_WELL_KNOWN && record.type[0] === 85) { // 'U' for URI
-                // URI record
-                const uriDecoder = new TextDecoder();
-                const payload = new Uint8Array(record.payload);
-                const uri = uriDecoder.decode(payload.slice(1)); // Skip URI identifier
-                readText += uri + '\n';
-                console.log('🔗 URI record found:', uri);
+                recipientAddress = text.trim();
+                console.log('📝 Address record found:', recipientAddress);
+                break;
               }
             }
             
-            if (readText.trim()) {
-              const timestamp = new Date().toLocaleString();
-              const newData = { text: readText.trim(), timestamp };
+            if (recipientAddress && recipientAddress.startsWith('0x')) {
+              console.log('✅ Valid recipient address found:', recipientAddress);
+              setRecipientAddress(recipientAddress);
               
-              setReceivedData(prev => [newData, ...prev]);
-              setSharedText(readText.trim());
-              
-              console.log('✅ NFC data saved:', readText.trim());
-              
-              // Show receiving feedback
-              showReceivingFeedback();
-              
-              // Show completion illumination
-              showTransferComplete('receiving');
-              
-              // Clean up
+              // Clean up NFC
               await NfcManager.cancelTechnologyRequest();
               setIsNfcReading(false);
               setNfcOperation('none');
               
-              showModal('🎉 DATA RECEIVED SUCCESSFULLY!', 
-                `✅ NFC tag has been read!\n\n` +
-                  `📥 Received: "${readText.trim()}"\n\n` +
-                  `The data has been saved to your app.\n\n` +
-                  `Reading will now stop automatically.`, [
-                  { 
-                    text: 'OK', 
-                    onPress: async () => {
+              // Show payment confirmation
+              showModal('Payment Confirmation', 
+                'Recipient address found!\n\n' +
+                'Address: ' + recipientAddress + '\n' +
+                'Amount: ' + paymentAmount + ' MON\n\n' +
+                'Do you want to proceed with the payment?',
+                [
+                  {
+                    text: 'Cancel',
+                    onPress: () => {
+                      console.log('❌ User cancelled payment');
                       setModalVisible(false);
-                      hideTransferComplete();
-                      // Stop reading after confirmation
-                      await stopNfcReading();
+                    }
+                  },
+                  {
+                    text: 'Send Payment',
+                    onPress: async () => {
+                      await executePayment(userPrivateKey, recipientAddress, paymentAmount);
                     }
                   }
-                ]);
+                ]
+              );
             } else {
-              console.log('❌ No readable text found in NFC tag');
-              
-              // Clean up
-              await NfcManager.cancelTechnologyRequest();
-              setIsNfcReading(false);
-              setNfcOperation('none');
-              
-              showModal('❌ No Readable Data', 'The NFC tag was read but contained no readable text or URI data.', [
-                { text: 'OK', onPress: () => setModalVisible(false) }
-              ]);
+              throw new Error('No valid Ethereum address found in NFC tag');
             }
           } else {
-            console.log('❌ No NDEF data found in NFC tag');
-            
-            // Clean up
-            await NfcManager.cancelTechnologyRequest();
-            setIsNfcReading(false);
-            setNfcOperation('none');
-            
-            showModal('❌ No NDEF Data', 'The NFC tag was read but contained no NDEF data.', [
-              { text: 'OK', onPress: () => setModalVisible(false) }
-            ]);
+            throw new Error('Invalid NDEF message format');
           }
-          
         } catch (error) {
-          console.log('NFC Reading Error:', error);
+          console.error('❌ Error reading NFC for payment:', error);
           
-          // Clean up
-          await NfcManager.cancelTechnologyRequest().catch(() => {});
+          await NfcManager.cancelTechnologyRequest();
           setIsNfcReading(false);
           setNfcOperation('none');
           
-          showModal('❌ NFC Reading Error', 'Failed to read NFC tag: ' + error, [
-            { text: 'OK', onPress: () => setModalVisible(false) }
-          ]);
+          showModal('❌ Payment Failed', 
+            'Failed to read recipient address.\n\n' +
+            'Error: ' + (error instanceof Error ? error.message : 'Unknown error') + '\n\n' +
+            'Please make sure the receiving device is in receive mode.',
+            [
+              { text: 'OK', onPress: () => setModalVisible(false) }
+            ]
+          );
         }
-      }, 1000); // Small delay to ensure UI is ready
-      
+      }, 1000);
     } catch (error) {
-      console.log('NFC Reading Error:', error);
+      console.error('❌ Error starting payment mode:', error);
       setIsNfcReading(false);
       setNfcOperation('none');
-      showModal('❌ NFC Reading Error', 'Failed to start NFC reading: ' + error, [
-        { text: 'OK', onPress: () => setModalVisible(false) }
-      ]);
+      
+      showModal('❌ Payment Error', 
+        'Failed to start payment mode.\n\n' +
+        'Error: ' + (error instanceof Error ? error.message : 'Unknown error'),
+        [
+          { text: 'OK', onPress: () => setModalVisible(false) }
+        ]
+      );
     }
   };
 
-  const handleEmulate = async () => {
-    console.log('=== HCE EMULATION FUNCTION STARTED ===');
-    console.log('Input text:', inputText);
-    console.log('HCE supported:', hceSupported);
-    console.log('HCE active:', isHceActive);
-    
-    if (!inputText.trim()) {
-      console.log('❌ No text to emulate');
-      showModal('No Text', 'Please type something first!', [
-        { text: 'OK', onPress: () => setModalVisible(false) }
-      ]);
-      return;
-    }
-
-    if (isHceActive) {
-      console.log('❌ HCE already active');
-      showModal('HCE Busy', 'HCE is already active. Please stop the current operation first.', [
-        { text: 'OK', onPress: () => setModalVisible(false) }
-      ]);
-      return;
-    }
-
-    if (hceSupported && session) {
-      try {
-        console.log('✅ Starting HCE emulation process');
-        setIsHceActive(true);
-        setHceOperation('emulating');
-        console.log('✅ HCE state set to emulating');
+  // Execute the actual payment
+  const executePayment = async (privateKey: string, recipientAddress: string, amount: string) => {
+    try {
+      setModalVisible(false);
+      setIsTransactionPending(true);
+      
+      showModal('Processing Payment', 
+        'Sending ' + amount + ' MON...\n\n' +
+        'Please wait while the transaction is being processed.',
+        []
+      );
+      
+      console.log('💸 Executing payment...');
+      console.log('📤 From: Private key available');
+      console.log('📥 To: ' + recipientAddress);
+      console.log('💰 Amount: ' + amount + ' MON');
+      
+      // Show paying feedback
+      showPayingFeedback();
+      
+      // Send payment
+      const result = await paymentService.sendMonTokens(privateKey, recipientAddress, amount);
+      
+      if (result.success && result.transactionHash) {
+        setTransactionHash(result.transactionHash);
         
-        // Show initial popup
-        showModal('HCE Emulation Started', 
-          'Starting HCE emulation mode...\n\n' +
-          'Text to emulate: "' + inputText + '"\n\n' +
-          'Your phone will now act as an NFC tag.',
+        console.log('✅ Payment successful!');
+        console.log('🔗 Transaction hash:', result.transactionHash);
+        
+        // Show completion illumination
+        showTransferComplete('paying');
+        
+        // Show success message
+        showModal('🎉 PAYMENT SUCCESSFUL!', 
+          'Payment sent successfully!\n\n' +
+          'Amount: ' + amount + ' MON\n' +
+          'To: ' + recipientAddress.slice(0, 6) + '...' + recipientAddress.slice(-4) + '\n' +
+          'Transaction: ' + result.transactionHash.slice(0, 10) + '...\n\n' +
+          'The transaction has been confirmed on the blockchain.',
           [
-            {
-              text: 'Cancel',
-              onPress: () => {
-                console.log('❌ User cancelled emulation');
-                setIsHceActive(false);
-                setHceOperation('none');
-                setModalVisible(false);
-              }
-            },
-            {
-              text: 'Continue',
-              onPress: async () => {
-                try {
-                  console.log('🔄 Creating NFC Type 4 tag...');
-                  
-                  // Create NFC Type 4 tag with the input text
-                  const tag = new NFCTagType4({
-                    type: NFCTagType4NDEFContentType.Text,
-                    content: inputText,
-                    writable: false,
-                  });
-                  
-                  console.log('✅ NFC Type 4 tag created');
-                  console.log('Tag content:', inputText);
-                  
-                  // Set the tag as the application for the HCE session
-                  session.setApplication(tag);
-                  console.log('✅ Tag set as HCE application');
-                  
-                  // Enable HCE emulation
-                  await session.setEnabled(true);
-                  console.log('✅ HCE emulation enabled');
-                  
-                  setModalVisible(false);
-                  
-                  // Show ready popup
-                  showModal('HCE Emulation Ready', 
-                    '✅ HCE is now active!\n\n' +
-                    'Text: "' + inputText + '"\n\n' +
-                    'Your phone is now emulating an NFC tag.\n' +
-                    'Other devices can read this tag by tapping.\n\n' +
-                    'Keep this screen open to maintain emulation.',
-                    [
-                      {
-                        text: 'Stop Emulation',
-                        onPress: () => {
-                          console.log('❌ User stopped HCE emulation');
-                          stopHceOperation();
-                        }
-                      }
-                    ]
-                  );
-                  
-                  // Set up event listener for when the tag is read
-                  const removeListener = session.on(HCESession.Events.HCE_STATE_READ, () => {
-                    console.log('📳 TAG HAS BEEN READ!');
-                    console.log('⏰ Timestamp:', new Date().toISOString());
-                    console.log('📱 Device state - isHceActive:', isHceActive);
-                    console.log('📱 Device state - hceOperation:', hceOperation);
-                    
-                    // Show sending feedback
-                    showSendingFeedback();
-                    
-                    // Show completion illumination
-                    showTransferComplete('sending');
-                    
-                    // Show toast notification
-                    if (Platform.OS === 'android') {
-                      ToastAndroid.show('The tag has been read! Thank You.', ToastAndroid.LONG);
-                    }
-                    
-                    // Don't update shared text state on sender - only on receiver
-                    console.log('📤 DATA SENT SUCCESSFULLY:', inputText);
-                    console.log('✅ Emulated text was read by another device');
-                    
-                    showModal('🎉 DATA SENT SUCCESSFULLY!', 
-                      `✅ Your NFC tag has been read!\n\n` +
-                        `📤 Sent: "${inputText}"\n\n` +
-                        `The other device has received this data.\n\n` +
-                        `Emulation will now stop automatically.`, [
-                        { 
-                          text: 'OK', 
-                          onPress: async () => {
-                            setModalVisible(false);
-                            hideTransferComplete();
-                            // Stop emulation after confirmation
-                            await stopHceOperation();
-                          }
-                        }
-                      ]);
-                  });
-                  
-                  // Store the remove listener function for cleanup
-                  // Note: In a real app, you'd want to store this and call it on cleanup
-                  
-                } catch (error) {
-                  console.log('HCE Emulation Error:', error);
-                  setIsHceActive(false);
-                  setHceOperation('none');
-                  showModal('❌ HCE Error', 'Failed to start HCE emulation: ' + error, [
-                    { text: 'OK', onPress: () => setModalVisible(false) }
-                  ]);
-                }
-              }
-            }
+            { text: 'OK', onPress: () => setModalVisible(false) }
           ]
         );
-        
-      } catch (error) {
-        console.log('HCE Emulation Error:', error);
-        setIsHceActive(false);
-        setHceOperation('none');
-        showModal('❌ HCE Error', 'Failed to start HCE emulation: ' + error, [
-          { text: 'OK', onPress: () => setModalVisible(false) }
-        ]);
+      } else {
+        throw new Error(result.error || 'Payment failed');
       }
-    } else {
-      showModal('HCE Not Available', 'HCE is not supported on this device or platform', [
-        { text: 'OK', onPress: () => setModalVisible(false) }
-      ]);
+    } catch (error) {
+      console.error('❌ Payment execution failed:', error);
+      
+      showModal('❌ PAYMENT FAILED', 
+        'Payment failed!\n\n' +
+        'Error: ' + (error instanceof Error ? error.message : 'Unknown error') + '\n\n' +
+        'Please check your balance and try again.',
+        [
+          { text: 'OK', onPress: () => setModalVisible(false) }
+        ]
+      );
+    } finally {
+      setIsTransactionPending(false);
     }
   };
 
-  const clearReceivedData = () => {
-    setReceivedData([]);
-    setSharedText('NOTHING');
-    setLastSavedText('');
+  const clearTransactionData = () => {
+    setTransactionHash('');
+    setRecipientAddress('');
+    setPaymentAmount('');
   };
 
   return (
@@ -558,17 +626,17 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       )}
 
       {/* Visual feedback overlays */}
-      {isSending && (
+      {isPaying && (
         <Animated.View 
           style={[
             styles.visualFeedback,
             styles.sendingFeedback,
             {
-              opacity: sendAnimation,
+              opacity: payAnimation,
             }
           ]}
         >
-          <Text style={styles.feedbackText}>📤 SENDING DATA...</Text>
+          <Text style={styles.feedbackText}>💸 SENDING PAYMENT...</Text>
         </Animated.View>
       )}
       
@@ -582,12 +650,12 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             }
           ]}
         >
-          <Text style={styles.feedbackText}>📥 RECEIVING DATA...</Text>
+          <Text style={styles.feedbackText}>📥 SHARING ADDRESS...</Text>
         </Animated.View>
       )}
       
       {isTransferComplete && (
-        <Animated.View 
+        <TouchableOpacity 
           style={[
             styles.visualFeedback,
             styles.transferComplete,
@@ -595,11 +663,14 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
               opacity: completeAnimation,
             }
           ]}
+          onPress={hideTransferComplete}
+          activeOpacity={1}
         >
           <Text style={styles.feedbackText}>
-            {transferType === 'sending' ? '📤 DATA SENT!' : '📥 DATA RECEIVED!'}
+            {transferType === 'paying' ? '💸 PAYMENT SENT!' : '📥 ADDRESS SHARED!'}
           </Text>
-        </Animated.View>
+          <Text style={styles.tapToDismissText}>Tap anywhere to dismiss</Text>
+        </TouchableOpacity>
       )}
       
       {/* Large Stop Buttons when operations are Active */}
@@ -608,14 +679,14 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
           {isHceActive && (
             <TouchableOpacity style={styles.largeStopButton} onPress={stopHceOperation}>
               <Text style={styles.largeStopButtonText}>
-                🛑 STOP HCE EMULATION
+                🛑 STOP RECEIVING
               </Text>
             </TouchableOpacity>
           )}
           {isNfcReading && (
             <TouchableOpacity style={[styles.largeStopButton, styles.nfcStopButton]} onPress={stopNfcReading}>
               <Text style={styles.largeStopButtonText}>
-                🛑 STOP NFC READING
+                🛑 STOP PAYMENT
               </Text>
             </TouchableOpacity>
           )}
@@ -623,62 +694,62 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       )}
       
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        <Text style={styles.helloWeb}>NFC Reader & Emulator 📱</Text>
+        <Text style={styles.helloWeb}>MON Payment & Receive 📱</Text>
         
         <TextInput
           style={styles.input}
-          placeholder="Type something to emulate as NFC tag..."
-          value={inputText}
-          onChangeText={setInputText}
+          placeholder="Enter amount of MON to send..."
+          value={paymentAmount}
+          onChangeText={setPaymentAmount}
+          keyboardType="numeric"
         />
         
-        {inputText ? (
-          <Text style={styles.displayText}>You typed: {inputText}</Text>
+        {paymentAmount ? (
+          <Text style={styles.displayText}>Amount: {paymentAmount} MON</Text>
         ) : null}
         
-        <View style={styles.sharedTextContainer}>
-          <Text style={styles.sharedTextLabel}>📥 Last Received Data:</Text>
-          <Text style={styles.sharedText}>{sharedText}</Text>
-          {lastSavedText && (
-            <Text style={styles.lastSavedText}>
-              💾 Last received: {lastSavedText} at {new Date().toLocaleTimeString()}
-            </Text>
-          )}
-        </View>
+        {recipientAddress && (
+          <View style={styles.sharedTextContainer}>
+            <Text style={styles.sharedTextLabel}>📥 Recipient Address:</Text>
+            <Text style={styles.sharedText}>{recipientAddress}</Text>
+          </View>
+        )}
         
         <View style={styles.buttonRow}>
           <TouchableOpacity 
             style={styles.buttonContainer}
-            onPress={handleEmulate}
+            onPress={handlePay}
           >
-            <Text style={styles.button}>Emulate NFC Tag</Text>
+            <Text style={styles.button}>Pay MON</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={[styles.buttonContainer, styles.readButton]}
-            onPress={readNfcTag}
+            onPress={handleReceive}
           >
-            <Text style={styles.button}>Read NFC Tag</Text>
+            <Text style={styles.button}>Receive</Text>
           </TouchableOpacity>
         </View>
 
         <TouchableOpacity 
           style={[styles.buttonContainer, styles.clearButton]}
-          onPress={clearReceivedData}
+          onPress={clearTransactionData}
         >
-          <Text style={styles.button}>Clear All Data</Text>
+          <Text style={styles.button}>Clear Transaction</Text>
         </TouchableOpacity>
         
-        {/* Received Data History */}
-        {receivedData.length > 0 && (
-          <View style={styles.historyContainer}>
-            <Text style={styles.historyTitle}>📋 Received Data History:</Text>
-            {receivedData.map((item, index) => (
-              <View key={index} style={styles.historyItem}>
-                <Text style={styles.historyText}>{item.text}</Text>
-                <Text style={styles.historyTimestamp}>{item.timestamp}</Text>
-              </View>
-            ))}
+        {/* Transaction Status */}
+        {isTransactionPending && (
+          <View style={styles.transactionContainer}>
+            <Text style={styles.transactionTitle}>⏳ Processing Payment...</Text>
+            <Text style={styles.transactionText}>Please wait while the transaction is being confirmed on the blockchain.</Text>
+          </View>
+        )}
+        
+        {transactionHash && !isTransactionPending && (
+          <View style={styles.transactionContainer}>
+            <Text style={styles.transactionTitle}>✅ Payment Confirmed!</Text>
+            <Text style={styles.transactionText}>Transaction Hash: {transactionHash.slice(0, 10)}...{transactionHash.slice(-8)}</Text>
           </View>
         )}
         
@@ -691,40 +762,40 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
         
         {hceSupported && !isHceActive && (
           <View style={styles.nfcStatusContainer}>
-            <Text style={styles.nfcStatus}>✅ HCE Ready!</Text>
-            <Text style={styles.nfcHelp}>Tap "Emulate NFC Tag" to start HCE emulation</Text>
+            <Text style={styles.nfcStatus}>✅ Receive Ready!</Text>
+            <Text style={styles.nfcHelp}>Tap "Receive" to share your address</Text>
           </View>
         )}
         
         {nfcSupported && !isNfcReading && (
           <View style={styles.nfcStatusContainer}>
-            <Text style={styles.nfcStatus}>✅ NFC Ready!</Text>
-            <Text style={styles.nfcHelp}>Tap "Read NFC Tag" to read NFC tags</Text>
+            <Text style={styles.nfcStatus}>✅ Pay Ready!</Text>
+            <Text style={styles.nfcHelp}>Enter amount and tap "Pay MON" to send payment</Text>
           </View>
         )}
         
-        {hceSupported && isHceActive && hceOperation === 'emulating' && (
+        {hceSupported && isHceActive && hceOperation === 'receiving' && (
           <View style={[styles.nfcStatusContainer, styles.nfcSharingContainer]}>
-            <Text style={[styles.nfcStatus, styles.nfcSharingStatus]}>📤 HCE EMULATION ACTIVE!</Text>
-            <Text style={styles.nfcSharingHelp}>Your phone is emulating an NFC tag with: "{inputText}"</Text>
+            <Text style={[styles.nfcStatus, styles.nfcSharingStatus]}>📤 RECEIVE MODE ACTIVE!</Text>
+            <Text style={styles.nfcSharingHelp}>Your phone is sharing your address for payment</Text>
             <View style={styles.nfcPulseIndicator}>
               <Text style={styles.nfcPulseText}>📤</Text>
             </View>
             <TouchableOpacity style={styles.stopButton} onPress={stopHceOperation}>
-              <Text style={styles.stopButtonText}>🛑 Stop Emulation</Text>
+              <Text style={styles.stopButtonText}>🛑 Stop Receiving</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {nfcSupported && isNfcReading && nfcOperation === 'reading' && (
+        {nfcSupported && isNfcReading && nfcOperation === 'paying' && (
           <View style={[styles.nfcStatusContainer, styles.nfcReceivingContainer]}>
-            <Text style={[styles.nfcStatus, styles.nfcReceivingStatus]}>📥 NFC READING ACTIVE!</Text>
-            <Text style={styles.nfcReceivingHelp}>Hold your phone near an NFC tag to read it</Text>
+            <Text style={[styles.nfcStatus, styles.nfcReceivingStatus]}>📥 PAYMENT MODE ACTIVE!</Text>
+            <Text style={styles.nfcReceivingHelp}>Tap your phone near a receiving device</Text>
             <View style={styles.nfcPulseIndicator}>
               <Text style={styles.nfcPulseText}>📥</Text>
             </View>
             <TouchableOpacity style={styles.stopButton} onPress={stopNfcReading}>
-              <Text style={styles.stopButtonText}>🛑 Stop Reading</Text>
+              <Text style={styles.stopButtonText}>🛑 Stop Payment</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -737,7 +808,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             🔧 Status: {hceSupported ? (isHceActive ? 'HCE ACTIVE' : 'HCE Ready') : 'HCE Unavailable'} | {nfcSupported ? (isNfcReading ? 'NFC ACTIVE' : 'NFC Ready') : 'NFC Unavailable'}
           </Text>
           <Text style={styles.nfcInfo}>
-            🏷️ Mode: Host Card Emulation (HCE) + NFC Reading
+            🏷️ Mode: MON Payment + Address Sharing
           </Text>
         </View>
       </ScrollView>
@@ -844,13 +915,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '600',
   },
-  lastSavedText: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 5,
-    fontStyle: 'italic',
-  },
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -869,148 +933,117 @@ const styles = StyleSheet.create({
   button: {
     color: 'white',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   readButton: {
     backgroundColor: '#28a745',
   },
   clearButton: {
     backgroundColor: '#dc3545',
-    alignSelf: 'center',
   },
-  historyContainer: {
+  transactionContainer: {
     backgroundColor: '#f8f9fa',
-    borderColor: '#dee2e6',
-    borderWidth: 1,
-    borderRadius: 10,
     padding: 15,
-    marginBottom: 20,
+    borderRadius: 10,
+    marginVertical: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#007AFF',
   },
-  historyTitle: {
+  transactionTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#495057',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  historyItem: {
-    backgroundColor: 'white',
-    borderColor: '#dee2e6',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
-  },
-  historyText: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '500',
+    color: '#007AFF',
     marginBottom: 5,
   },
-  historyTimestamp: {
-    fontSize: 12,
+  transactionText: {
+    fontSize: 14,
     color: '#666',
-    fontStyle: 'italic',
+    lineHeight: 20,
   },
   nfcStatusContainer: {
     marginTop: 15,
-    padding: 10,
-    borderRadius: 8,
+    padding: 15,
+    borderRadius: 10,
     backgroundColor: '#f8f9fa',
-    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e9ecef',
   },
   nfcStatus: {
     fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 5,
     textAlign: 'center',
+    marginBottom: 5,
   },
   nfcHelp: {
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
-  },
-  nfcInfoContainer: {
-    marginTop: 20,
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: '#e9ecef',
-    alignItems: 'center',
-  },
-  nfcInfo: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 3,
-    textAlign: 'center',
+    lineHeight: 20,
   },
   nfcSharingContainer: {
-    backgroundColor: '#d4edda',
-    borderColor: '#28a745',
-    borderWidth: 2,
-    borderRadius: 10,
-    padding: 15,
-    marginTop: 10,
+    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+    borderColor: '#007AFF',
   },
   nfcSharingStatus: {
-    color: '#155724',
-    fontSize: 20,
-    fontWeight: 'bold',
+    color: '#007AFF',
   },
   nfcSharingHelp: {
-    color: '#155724',
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 5,
+    color: '#007AFF',
+    fontWeight: '500',
   },
   nfcReceivingContainer: {
-    backgroundColor: '#d1ecf1',
-    borderColor: '#17a2b8',
-    borderWidth: 2,
-    borderRadius: 10,
-    padding: 15,
-    marginTop: 10,
+    backgroundColor: 'rgba(40, 167, 69, 0.1)',
+    borderColor: '#28a745',
   },
   nfcReceivingStatus: {
-    color: '#0c5460',
-    fontSize: 20,
-    fontWeight: 'bold',
+    color: '#28a745',
   },
   nfcReceivingHelp: {
-    color: '#0c5460',
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 5,
+    color: '#28a745',
+    fontWeight: '500',
   },
   nfcPulseIndicator: {
     alignItems: 'center',
-    marginTop: 10,
+    marginVertical: 10,
   },
   nfcPulseText: {
     fontSize: 24,
-    color: '#ffc107',
-    fontWeight: 'bold',
   },
   stopButton: {
     backgroundColor: '#dc3545',
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 15,
     marginTop: 10,
   },
   stopButtonText: {
     color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: 'bold',
     textAlign: 'center',
+  },
+  nfcInfoContainer: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  nfcInfo: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 5,
   },
   stopButtonContainer: {
     position: 'absolute',
-    top: 50,
+    top: 100,
     left: 0,
     right: 0,
     zIndex: 1000,
     alignItems: 'center',
-    paddingHorizontal: 20,
   },
   largeStopButton: {
     backgroundColor: '#dc3545',
@@ -1020,21 +1053,20 @@ const styles = StyleSheet.create({
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 4,
+      height: 2,
     },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
-    marginBottom: 10,
-  },
-  nfcStopButton: {
-    backgroundColor: '#fd7e14',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   largeStopButtonText: {
     color: 'white',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  nfcStopButton: {
+    backgroundColor: '#fd7e14',
   },
   visualFeedback: {
     position: 'absolute',
@@ -1067,6 +1099,14 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
+  },
+  tapToDismissText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 10,
+    opacity: 0.8,
   },
   modalOverlay: {
     flex: 1,

@@ -10,6 +10,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [monBalance, setMonBalance] = useState<string>('Loading...');
+  const [tokenBalances, setTokenBalances] = useState<{[key: string]: string}>({});
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
 
   const authService = AuthService.getInstance();
@@ -44,6 +45,9 @@ export default function App() {
       
       // Check MON balance
       await checkMonBalance(ethereumAddress);
+      
+      // Check all token balances
+      await checkAllTokenBalances(ethereumAddress);
     } else {
       console.log('❌ No valid Ethereum address found for user');
       setMonBalance('No address available');
@@ -64,6 +68,24 @@ export default function App() {
       setMonBalance('Error fetching balance');
     } finally {
       setIsLoadingBalance(false);
+    }
+  };
+
+  const checkAllTokenBalances = async (address: string) => {
+    try {
+      console.log('🪙 Checking all token balances...');
+      
+      const allBalances = await balanceService.getAllTokenBalances(address);
+      const balanceMap: {[key: string]: string} = {};
+      
+      allBalances.forEach(balanceInfo => {
+        balanceMap[balanceInfo.symbol] = balanceInfo.balanceFormatted;
+      });
+      
+      setTokenBalances(balanceMap);
+      console.log('✅ All token balances updated:', balanceMap);
+    } catch (error) {
+      console.error('❌ Error checking token balances:', error);
     }
   };
 
@@ -132,6 +154,15 @@ export default function App() {
           <Text style={styles.balanceText}>
             💰 {monBalance}
           </Text>
+          {Object.keys(tokenBalances).length > 0 && (
+            <View style={styles.tokenBalancesContainer}>
+              {Object.entries(tokenBalances).map(([symbol, balance]) => (
+                <Text key={symbol} style={styles.tokenBalanceText}>
+                  🪙 {symbol}: {parseFloat(balance) > 0 ? balance : '0'}
+                </Text>
+              ))}
+            </View>
+          )}
         </View>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutButtonText}>Logout</Text>
@@ -155,12 +186,13 @@ export default function App() {
             const address = authService.getEthereumAddress();
             if (address && address !== 'Invalid Address') {
               checkMonBalance(address);
+              checkAllTokenBalances(address);
             }
           }}
           disabled={isLoadingBalance}
         >
           <Text style={styles.refreshButtonText}>
-            {isLoadingBalance ? '🔄 Refreshing...' : '🔄 Refresh Balance'}
+            {isLoadingBalance ? '🔄 Refreshing...' : '🔄 Refresh All Balances'}
           </Text>
         </TouchableOpacity>
         
@@ -206,6 +238,14 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     marginTop: 3,
     fontWeight: '600',
+  },
+  tokenBalancesContainer: {
+    marginTop: 5,
+  },
+  tokenBalanceText: {
+    fontSize: 10,
+    color: '#666',
+    marginTop: 2,
   },
   logoutButton: {
     backgroundColor: '#dc3545',
