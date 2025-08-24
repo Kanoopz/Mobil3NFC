@@ -95,6 +95,9 @@ export interface Token {
   logoURI: string;
 }
 
+// Native MON token address for balance checking
+export const NATIVE_MON_ADDRESS = "0x0000000000000000000000000000000000000000";
+
 // Monad Testnet Tokens
 export const MONAD_TESTNET_TOKENS: Token[] = [
   {
@@ -102,7 +105,7 @@ export const MONAD_TESTNET_TOKENS: Token[] = [
     name: "Monad",
     symbol: "MON",
     decimals: 18,
-    address: "0x0000000000000000000000000000000000000000", // Native token has zero address
+    address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", // Native token address for 0x API
     logoURI: "https://assets.coingecko.com/coins/images/34503/small/monad.jpg",
   },
   {

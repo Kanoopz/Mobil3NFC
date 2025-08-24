@@ -6,9 +6,11 @@ import {
   NFCTagType4,
 } from 'react-native-hce';
 import NfcManager, { NfcTech } from 'react-native-nfc-manager';
+import { ethers } from 'ethers';
 import AuthService from './AuthService';
 import BalanceService from './services/BalanceService';
 import PaymentService from './services/PaymentService';
+import SwapService from './services/SwapService';
 import { MONAD_TESTNET_TOKENS, Token } from './constants/blockchain';
 
 interface NFCScreenProps {
@@ -23,6 +25,11 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
   const [tokenBalances, setTokenBalances] = useState<{[key: string]: string}>({});
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [monBalance, setMonBalance] = useState<string>('Loading...');
+  const [desiredReceiveToken, setDesiredReceiveToken] = useState<Token>(MONAD_TESTNET_TOKENS.find(t => t.symbol === 'USDC') || MONAD_TESTNET_TOKENS[2]);
+  const [showReceiveTokenSelector, setShowReceiveTokenSelector] = useState(false);
+  const [swapQuote, setSwapQuote] = useState<any>(null);
+  const [isGettingQuote, setIsGettingQuote] = useState(false);
+  const [tokenUpdateTimestamp, setTokenUpdateTimestamp] = useState<number>(0);
   const [hceSupported, setHceSupported] = useState(false);
   const [nfcSupported, setNfcSupported] = useState(false);
   const [isHceActive, setIsHceActive] = useState(false);
@@ -49,6 +56,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
   const authService = AuthService.getInstance();
   const balanceService = BalanceService.getInstance();
   const paymentService = PaymentService.getInstance();
+  const swapService = SwapService.getInstance();
 
   // Log user address and check balance when NFC screen loads
   useEffect(() => {
@@ -57,38 +65,68 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       console.log('👤 NFC Screen - User Address:', ethereumAddress);
       console.log('🔗 NFC Screen - Short Address:', authService.getShortEthereumAddress());
       
-      // Check MON balance
-      balanceService.getFormattedBalance(ethereumAddress).then(balance => {
-        console.log(`💰 NFC Screen - MON Balance: ${balance}`);
-        setTokenBalances(prev => ({ ...prev, MON: balance }));
-        setMonBalance(balance);
-      }).catch(error => {
-        console.error('❌ NFC Screen - Error checking MON balance:', error);
-        // Set a fallback value for MON balance
-        setTokenBalances(prev => ({ ...prev, MON: '0.000000' }));
-        setMonBalance('0.000000');
-      });
-
-      // Check all token balances
-      balanceService.getAllTokenBalances(ethereumAddress).then(balances => {
-        console.log('🪙 NFC Screen - Token Balances:');
-        const balanceMap: {[key: string]: string} = {};
-        balances.forEach(balance => {
-          console.log(`  ${balance.symbol}: ${balance.balanceFormatted}`);
-          balanceMap[balance.symbol] = balance.balanceFormatted;
-        });
-        setTokenBalances(prev => ({ ...prev, ...balanceMap }));
-      }).catch(error => {
-        console.error('❌ NFC Screen - Error checking token balances:', error);
-        // Set fallback values for all token balances
-        const fallbackBalances: {[key: string]: string} = {};
-        MONAD_TESTNET_TOKENS.forEach(token => {
-          if (token.symbol !== 'MON') { // MON is handled separately
-            fallbackBalances[token.symbol] = '0.000000';
+      // Show decimal examples for reference
+      balanceService.showDecimalExamples();
+      
+      // Check native MON balance with direct ethers function
+      balanceService.checkNativeMonBalance(ethereumAddress)
+        .then(result => {
+          if (result.success && result.balance) {
+            console.log(`💰 NFC Screen - MON Balance: ${result.balance}`);
+            setTokenBalances(prev => ({ ...prev, MON: result.balance || '0' }));
+            setMonBalance(result.balance);
+          } else {
+            console.log('⚠️ NFC Screen - MON balance not available, using 0');
+            console.log('❌ Error:', result.error);
+            setTokenBalances(prev => ({ ...prev, MON: '0.000000' }));
+            setMonBalance('0.000000');
           }
+        })
+        .catch(error => {
+          console.error('❌ NFC Screen - Error checking MON balance:', error);
+          setTokenBalances(prev => ({ ...prev, MON: '0.000000' }));
+          setMonBalance('0.000000');
         });
-        setTokenBalances(prev => ({ ...prev, ...fallbackBalances }));
-      });
+
+      // Check all token balances with direct ethers functions
+      const tokenPromises = MONAD_TESTNET_TOKENS
+        .filter(token => token.symbol !== 'MON') // MON is handled separately
+        .map(token => 
+          balanceService.checkERC20TokenBalance(ethereumAddress, token.symbol)
+            .then(result => ({
+              symbol: token.symbol,
+              success: result.success,
+              balance: result.balance || '0',
+              error: result.error
+            }))
+        );
+
+      Promise.all(tokenPromises)
+        .then(results => {
+          console.log('🪙 NFC Screen - Token Balances:');
+          const balanceMap: {[key: string]: string} = {};
+          results.forEach(result => {
+            if (result.success) {
+              console.log(`  ✅ ${result.symbol}: ${result.balance}`);
+              balanceMap[result.symbol] = result.balance;
+            } else {
+              console.log(`  ❌ ${result.symbol}: Error - ${result.error}`);
+              balanceMap[result.symbol] = '0.000000';
+            }
+          });
+          setTokenBalances(prev => ({ ...prev, ...balanceMap }));
+        })
+        .catch(error => {
+          console.error('❌ NFC Screen - Error checking token balances:', error);
+          // Set fallback values for all token balances
+          const fallbackBalances: {[key: string]: string} = {};
+          MONAD_TESTNET_TOKENS.forEach(token => {
+            if (token.symbol !== 'MON') { // MON is handled separately
+              fallbackBalances[token.symbol] = '0.000000';
+            }
+          });
+          setTokenBalances(prev => ({ ...prev, ...fallbackBalances }));
+        });
     } else {
       console.log('❌ NFC Screen - No valid Ethereum address found');
     }
@@ -100,6 +138,27 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       console.log('🔄 TRANSACTION HASH CHANGED:', transactionHash);
     }
   }, [transactionHash]);
+
+  // Update quote when payment amount or tokens change
+  useEffect(() => {
+    console.log('🔄 Quote useEffect triggered:', {
+      paymentAmount,
+      recipientAddress: recipientAddress ? 'present' : 'missing',
+      selectedToken: selectedToken.symbol,
+      desiredReceiveToken: desiredReceiveToken.symbol
+    });
+    
+    if (paymentAmount && recipientAddress && parseFloat(paymentAmount) > 0) {
+      console.log('✅ Conditions met, calling getSwapQuote');
+      // Add a small delay to ensure state is updated
+      setTimeout(() => {
+        getSwapQuote();
+      }, 100);
+    } else {
+      console.log('❌ Conditions not met, clearing swap quote');
+      setSwapQuote(null);
+    }
+  }, [paymentAmount, selectedToken, desiredReceiveToken, recipientAddress]);
 
   // Initialize NFC and HCE
   useEffect(() => {
@@ -341,10 +400,19 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
           console.log('🔄 Starting HCE receive mode...');
           console.log('📤 Sharing address:', userAddress);
           
-          // Create NFC Type 4 tag with the user address
+          // Create NFC Type 4 tag with the user address and desired receive token
+          const addressData = {
+            address: userAddress,
+            desiredToken: desiredReceiveToken.symbol,
+            desiredTokenAddress: desiredReceiveToken.address,
+            timestamp: Date.now()
+          };
+          
+          console.log('📤 Sharing address data:', addressData);
+          
           const tag = new NFCTagType4({
             type: NFCTagType4NDEFContentType.Text,
-            content: userAddress,
+            content: JSON.stringify(addressData),
             writable: false,
           });
           
@@ -539,13 +607,65 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
               console.log('📄 Record type:', record.type, 'TNF:', record.tnf);
               
               if (record.tnf === 1 && record.type[0] === 84) { // TNF_WELL_KNOWN = 1, 'T' for text
-                // Text record - should contain Ethereum address
+                // Text record - should contain address data
                 const textDecoder = new TextDecoder();
                 const payload = new Uint8Array(record.payload);
                 const text = textDecoder.decode(payload.slice(3)); // Skip language code
-                recipientAddress = text.trim();
-                console.log('📝 Address record found:', recipientAddress);
-                break;
+                
+                try {
+                  // Try to parse as JSON first (new format with desired token)
+                  const addressData = JSON.parse(text.trim());
+                  console.log('📝 Parsed address data:', addressData);
+                  
+                  if (addressData.address && addressData.address.startsWith('0x')) {
+                    recipientAddress = addressData.address;
+                    console.log('📝 Recipient address set:', recipientAddress);
+                    console.log('📝 Desired token from NFC:', addressData.desiredToken);
+                    
+                    // Update desired receive token if specified
+                    if (addressData.desiredToken) {
+                      const token = MONAD_TESTNET_TOKENS.find(t => t.symbol === addressData.desiredToken);
+                      if (token) {
+                        console.log('📝 Found token for symbol:', addressData.desiredToken, '->', token.symbol);
+                        
+                        // Update state immediately
+                        setDesiredReceiveToken(token);
+                        setTokenUpdateTimestamp(Date.now());
+                        
+                        // Store the token locally for immediate use
+                        const updatedDesiredToken = token;
+                        
+                        console.log('📝 Desired receive token updated to:', updatedDesiredToken.symbol);
+                        
+                        // Force a re-render and quote generation with the new token
+                        setTimeout(() => {
+                          console.log('🔄 Forcing quote regeneration with new token:', updatedDesiredToken.symbol);
+                          if (paymentAmount && parseFloat(paymentAmount) > 0) {
+                            // Use the updated token directly instead of relying on state
+                            getSwapQuoteWithToken(updatedDesiredToken);
+                          }
+                        }, 200);
+                      } else {
+                        console.error('❌ Token not found for symbol:', addressData.desiredToken);
+                      }
+                    } else {
+                      console.log('⚠️ No desired token specified in NFC data');
+                    }
+                    break;
+                  } else {
+                    console.error('❌ Invalid address in NFC data:', addressData.address);
+                  }
+                } catch (e) {
+                  console.log('📝 Failed to parse JSON, trying old format');
+                  // Fallback to old format (just address)
+                  recipientAddress = text.trim();
+                  if (recipientAddress && recipientAddress.startsWith('0x')) {
+                    console.log('📝 Address record found (old format):', recipientAddress);
+                    break;
+                  } else {
+                    console.error('❌ Invalid address format:', recipientAddress);
+                  }
+                }
               }
             }
             
@@ -559,12 +679,52 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
               setNfcOperation('none');
               
               // Show payment confirmation
+              const isSwapNeeded = selectedToken.symbol !== desiredReceiveToken.symbol;
+              const hasSwapQuote = swapQuote && isSwapNeeded;
+              
+              let confirmationMessage = '';
+              let buttonText = '';
+              let onPressAction = null;
+              
+                    if (isSwapNeeded && !hasSwapQuote) {
+        // Swap needed but no quote available - fallback to direct payment
+        confirmationMessage = `Recipient address found!\n\n` +
+           `Address: ${recipientAddress}\n` +
+           `📤 You'll pay: ${paymentAmount} ${selectedToken.symbol}\n` +
+           `📥 They'll receive: ${paymentAmount} ${selectedToken.symbol}\n\n` +
+           `Do you want to proceed with the payment?`;
+        buttonText = 'Send Payment';
+        onPressAction = async () => {
+          await executePayment(userPrivateKey, recipientAddress, paymentAmount, selectedToken);
+        };
+              } else if (isSwapNeeded && hasSwapQuote) {
+                // Swap needed and quote available
+                const buyAmountFormatted = swapService.formatAmount(swapQuote.buyAmount, desiredReceiveToken.decimals);
+                confirmationMessage = `Recipient address found!\n\n` +
+                  `Address: ${recipientAddress}\n` +
+                  `📤 You'll pay: ${paymentAmount} ${selectedToken.symbol}\n` +
+                  `📥 They'll receive: ${buyAmountFormatted} ${desiredReceiveToken.symbol}\n` +
+                  `🔄 Swap will be executed automatically\n\n` +
+                  `Do you want to proceed with the swap payment?`;
+                buttonText = 'Send Swap Payment';
+                onPressAction = async () => {
+                  await executeSwapPayment(userPrivateKey, recipientAddress, paymentAmount, selectedToken, desiredReceiveToken);
+                };
+              } else {
+                // Same token, direct payment
+                confirmationMessage = `Recipient address found!\n\n` +
+                  `Address: ${recipientAddress}\n` +
+                  `Token: ${selectedToken.symbol}\n` +
+                  `Amount: ${paymentAmount} ${selectedToken.symbol}\n\n` +
+                  `Do you want to proceed with the payment?`;
+                buttonText = 'Send Payment';
+                onPressAction = async () => {
+                  await executePayment(userPrivateKey, recipientAddress, paymentAmount, selectedToken);
+                };
+              }
+
               showModal('Payment Confirmation', 
-                'Recipient address found!\n\n' +
-                'Address: ' + recipientAddress + '\n' +
-                'Token: ' + selectedToken.symbol + '\n' +
-                'Amount: ' + paymentAmount + ' ' + selectedToken.symbol + '\n\n' +
-                'Do you want to proceed with the payment?',
+                confirmationMessage,
                 [
                   {
                     text: 'Cancel',
@@ -574,10 +734,8 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
                     }
                   },
                   {
-                    text: 'Send Payment',
-                    onPress: async () => {
-                      await executePayment(userPrivateKey, recipientAddress, paymentAmount, selectedToken);
-                    }
+                    text: buttonText,
+                    onPress: onPressAction
                   }
                 ]
               );
@@ -704,6 +862,155 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
     }
   };
 
+  // Get swap quote when payment amount or tokens change
+  const getSwapQuote = async () => {
+    return getSwapQuoteWithToken(desiredReceiveToken);
+  };
+
+  // Get swap quote with specific token (for immediate use after NFC)
+  const getSwapQuoteWithToken = async (receiveToken: Token) => {
+    console.log('🔄 getSwapQuoteWithToken called with:', {
+      paymentAmount,
+      recipientAddress,
+      selectedToken: selectedToken.symbol,
+      receiveToken: receiveToken.symbol,
+      tokenUpdateTimestamp
+    });
+
+    if (!paymentAmount || parseFloat(paymentAmount) <= 0 || !recipientAddress) {
+      console.log('❌ Invalid parameters for swap quote');
+      setSwapQuote(null);
+      return;
+    }
+
+    // If payer and receiver want the same token, no swap needed
+    if (selectedToken.symbol === receiveToken.symbol) {
+      console.log('✅ Same token, no swap needed');
+      setSwapQuote(null);
+      return;
+    }
+
+    console.log('🔄 Generating quote for:', {
+      sellToken: selectedToken.symbol,
+      buyToken: receiveToken.symbol,
+      sellAmount: paymentAmount,
+      sellTokenAddress: selectedToken.address,
+      buyTokenAddress: receiveToken.address
+    });
+
+    setIsGettingQuote(true);
+    try {
+      const sellAmountWei = swapService.toWei(paymentAmount, selectedToken.decimals);
+      console.log('💰 Converted amount to wei:', sellAmountWei);
+      
+      const result = await swapService.getQuote(
+        selectedToken,
+        receiveToken,
+        sellAmountWei,
+        recipientAddress
+      );
+
+      if (result.success && result.quote) {
+        setSwapQuote(result.quote);
+        console.log('✅ Swap quote received:', result.quote);
+      } else {
+        setSwapQuote(null);
+        console.error('❌ Failed to get swap quote:', result.error);
+      }
+    } catch (error) {
+      console.error('❌ Error getting swap quote:', error);
+      setSwapQuote(null);
+    } finally {
+      setIsGettingQuote(false);
+    }
+  };
+
+  // Execute swap payment
+  const executeSwapPayment = async (privateKey: string, recipientAddress: string, amount: string, sellToken: Token, buyToken: Token) => {
+    try {
+      setModalVisible(false);
+      setIsTransactionPending(true);
+      
+      showModal('Processing Swap Payment', 
+        `Swapping ${amount} ${sellToken.symbol} to ${buyToken.symbol}...\n\n` +
+        'Please wait while the swap transaction is being processed.',
+        []
+      );
+      
+      console.log('🔄 Executing swap payment...');
+      console.log(`📤 Selling: ${amount} ${sellToken.symbol}`);
+      console.log(`📥 Buying: ${buyToken.symbol}`);
+      console.log(`👤 Recipient: ${recipientAddress}`);
+      
+      // Show paying feedback
+      showPayingFeedback();
+      
+      if (!swapQuote) {
+        console.log('⚠️ No swap quote available, falling back to direct payment');
+        // Fallback to direct payment
+        await executePayment(privateKey, recipientAddress, amount, sellToken);
+        return;
+      }
+
+      // Execute the swap
+      const result = await swapService.executeSwap(privateKey, swapQuote, recipientAddress);
+      
+      if (result.success && result.transactionHash) {
+        setTransactionHash(result.transactionHash);
+        
+        console.log('✅ Swap payment successful!');
+        console.log('🔗 Transaction hash:', result.transactionHash);
+        
+        // Show completion illumination
+        showTransferComplete('paying');
+        
+        // Show success message
+        const buyAmountFormatted = swapService.formatAmount(swapQuote.buyAmount, buyToken.decimals);
+        showModal('🎉 Payment Sent!', 
+          `Your payment has been sent successfully!\n\n` +
+          `📤 You paid: ${amount} ${sellToken.symbol}\n` +
+          `📥 They received: ${buyAmountFormatted} ${buyToken.symbol}\n\n` +
+          `The recipient will receive ${buyToken.symbol} tokens.`,
+          [
+            { 
+              text: 'OK', 
+              onPress: async () => {
+                setModalVisible(false);
+                // Stop payment mode after successful transaction
+                stopNfcReading();
+                
+                // Refresh balances after successful payment
+                const userAddress = authService.getEthereumAddress();
+                if (userAddress && userAddress !== 'Invalid Address') {
+                  console.log('🔄 Refreshing balances after payment...');
+                  try {
+                    await balanceService.getFormattedBalance(userAddress);
+                    await balanceService.getAllTokenBalances(userAddress);
+                    console.log('✅ Balances refreshed after payment');
+                  } catch (error) {
+                    console.error('❌ Error refreshing balances after payment:', error);
+                  }
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        console.log('⚠️ Swap failed, falling back to direct payment');
+        // Fallback to direct payment
+        await executePayment(privateKey, recipientAddress, amount, sellToken);
+      }
+    } catch (error) {
+      console.error('❌ Swap payment execution failed:', error);
+      console.log('⚠️ Falling back to direct payment');
+      
+      // Fallback to direct payment
+      await executePayment(privateKey, recipientAddress, amount, sellToken);
+    } finally {
+      setIsTransactionPending(false);
+    }
+  };
+
 
 
   return (
@@ -799,13 +1106,27 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
         
         {/* Token Selector */}
         <View style={styles.tokenSelectorContainer}>
-          <Text style={styles.tokenSelectorLabel}>🪙 Select Token:</Text>
+          <Text style={styles.tokenSelectorLabel}>🪙 Pay with Token:</Text>
           <TouchableOpacity 
             style={styles.tokenSelectorButton}
             onPress={() => setShowTokenSelector(true)}
           >
             <Text style={styles.tokenSelectorButtonText}>
               {selectedToken.symbol} - {selectedToken.name}
+            </Text>
+            <Text style={styles.tokenSelectorArrow}>▼</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Desired Receive Token Selector */}
+        <View style={styles.tokenSelectorContainer}>
+          <Text style={styles.tokenSelectorLabel}>📥 Receive Token:</Text>
+          <TouchableOpacity 
+            style={styles.tokenSelectorButton}
+            onPress={() => setShowReceiveTokenSelector(true)}
+          >
+            <Text style={styles.tokenSelectorButtonText}>
+              {desiredReceiveToken.symbol} - {desiredReceiveToken.name}
             </Text>
             <Text style={styles.tokenSelectorArrow}>▼</Text>
           </TouchableOpacity>
@@ -827,6 +1148,26 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
           <View style={styles.sharedTextContainer}>
             <Text style={styles.sharedTextLabel}>📥 Recipient Address:</Text>
             <Text style={styles.sharedText}>{recipientAddress}</Text>
+          </View>
+        )}
+
+
+
+        {/* Swap Quote Display */}
+        {swapQuote && selectedToken.symbol !== desiredReceiveToken.symbol && (
+          <View style={styles.swapQuoteContainer}>
+            <Text style={styles.swapQuoteTitle}>🔄 Swap Quote:</Text>
+            <View style={styles.swapQuoteDetails}>
+              <Text style={styles.swapQuoteText}>
+                📤 You pay: {paymentAmount} {selectedToken.symbol}
+              </Text>
+              <Text style={styles.swapQuoteText}>
+                📥 They receive: {swapService.formatAmount(swapQuote.buyAmount, desiredReceiveToken.decimals)} {desiredReceiveToken.symbol}
+              </Text>
+              {isGettingQuote && (
+                <Text style={styles.swapQuoteText}>⏳ Getting quote...</Text>
+              )}
+            </View>
           </View>
         )}
         
@@ -932,6 +1273,53 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             <TouchableOpacity
               style={styles.modalButton}
               onPress={() => setShowTokenSelector(false)}
+            >
+              <Text style={styles.modalButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Receive Token Selector Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showReceiveTokenSelector}
+        onRequestClose={() => setShowReceiveTokenSelector(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.simpleTokenModal}>
+            <Text style={styles.modalTitle}>📥 Select Receive Token</Text>
+            <View style={styles.simpleTokenList}>
+              {MONAD_TESTNET_TOKENS.map((token) => (
+                <TouchableOpacity
+                  key={token.symbol}
+                  style={[
+                    styles.simpleTokenItem,
+                    desiredReceiveToken.symbol === token.symbol && styles.simpleTokenItemSelected
+                  ]}
+                  onPress={() => {
+                    setDesiredReceiveToken(token);
+                    setShowReceiveTokenSelector(false);
+                  }}
+                >
+                  <View style={styles.tokenItemLeft}>
+                    <Text style={styles.simpleTokenText}>
+                      {token.symbol} - {token.name}
+                    </Text>
+                    <Text style={styles.tokenBalanceText}>
+                      Balance: {tokenBalances[token.symbol] || 'Loading...'}
+                    </Text>
+                  </View>
+                  {desiredReceiveToken.symbol === token.symbol && (
+                    <Text style={styles.simpleTokenCheck}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setShowReceiveTokenSelector(false)}
             >
               <Text style={styles.modalButtonText}>Cancel</Text>
             </TouchableOpacity>
@@ -1542,4 +1930,31 @@ const styles = StyleSheet.create({
   logoutButton: {
     backgroundColor: '#dc3545',
   },
+  swapQuoteContainer: {
+    backgroundColor: '#e8f5e8',
+    borderColor: '#28a745',
+    borderWidth: 2,
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  swapQuoteTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#28a745',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  swapQuoteDetails: {
+    alignItems: 'center',
+  },
+  swapQuoteText: {
+    fontSize: 16,
+    color: '#333',
+    textAlign: 'center',
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+
 });
