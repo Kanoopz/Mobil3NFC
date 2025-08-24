@@ -35,6 +35,20 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# APK files (too large for GitHub)
+build-*.apk
+*.apk
+
+# Android build files
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+
+# iOS build files
+ios/build/
+ios/Pods/
+
 # Temporary files
 *.tmp
 *.temp
