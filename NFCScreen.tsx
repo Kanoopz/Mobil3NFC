@@ -20,6 +20,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
   const [recipientAddress, setRecipientAddress] = useState('');
   const [selectedToken, setSelectedToken] = useState<Token>(MONAD_TESTNET_TOKENS.find(t => t.symbol === 'MON') || MONAD_TESTNET_TOKENS[0]);
   const [showTokenSelector, setShowTokenSelector] = useState(false);
+  const [tokenBalances, setTokenBalances] = useState<{[key: string]: string}>({});
   const [hceSupported, setHceSupported] = useState(false);
   const [nfcSupported, setNfcSupported] = useState(false);
   const [isHceActive, setIsHceActive] = useState(false);
@@ -57,18 +58,32 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       // Check MON balance
       balanceService.getFormattedBalance(ethereumAddress).then(balance => {
         console.log(`💰 NFC Screen - MON Balance: ${balance}`);
+        setTokenBalances(prev => ({ ...prev, MON: balance }));
       }).catch(error => {
-        console.error('❌ NFC Screen - Error checking balance:', error);
+        console.error('❌ NFC Screen - Error checking MON balance:', error);
+        // Set a fallback value for MON balance
+        setTokenBalances(prev => ({ ...prev, MON: '0.000000' }));
       });
 
       // Check all token balances
       balanceService.getAllTokenBalances(ethereumAddress).then(balances => {
         console.log('🪙 NFC Screen - Token Balances:');
+        const balanceMap: {[key: string]: string} = {};
         balances.forEach(balance => {
           console.log(`  ${balance.symbol}: ${balance.balanceFormatted}`);
+          balanceMap[balance.symbol] = balance.balanceFormatted;
         });
+        setTokenBalances(prev => ({ ...prev, ...balanceMap }));
       }).catch(error => {
         console.error('❌ NFC Screen - Error checking token balances:', error);
+        // Set fallback values for all token balances
+        const fallbackBalances: {[key: string]: string} = {};
+        MONAD_TESTNET_TOKENS.forEach(token => {
+          if (token.symbol !== 'MON') { // MON is handled separately
+            fallbackBalances[token.symbol] = '0.000000';
+          }
+        });
+        setTokenBalances(prev => ({ ...prev, ...fallbackBalances }));
       });
     } else {
       console.log('❌ NFC Screen - No valid Ethereum address found');
@@ -197,6 +212,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             console.log('✅ Balances auto-refreshed after payment');
           } catch (error) {
             console.error('❌ Error auto-refreshing balances after payment:', error);
+            // Silently handle balance refresh errors - don't show to user
           }
         }
       } else if (type === 'receiving') {
@@ -212,6 +228,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
             console.log('✅ Balances auto-refreshed after address sharing');
           } catch (error) {
             console.error('❌ Error auto-refreshing balances after address sharing:', error);
+            // Silently handle balance refresh errors - don't show to user
           }
         }
       }
@@ -393,6 +410,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
                       console.log('✅ Balances refreshed after address sharing');
                     } catch (error) {
                       console.error('❌ Error refreshing balances after address sharing:', error);
+                      // Silently handle balance refresh errors - don't show to user
                     }
                   }
                 }
@@ -656,6 +674,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
                     console.log('✅ Balances refreshed after payment');
                   } catch (error) {
                     console.error('❌ Error refreshing balances after payment:', error);
+                    // Silently handle balance refresh errors - don't show to user
                   }
                 }
               }
@@ -896,9 +915,14 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
                     setShowTokenSelector(false);
                   }}
                 >
-                  <Text style={styles.simpleTokenText}>
-                    {token.symbol} - {token.name}
-                  </Text>
+                  <View style={styles.tokenItemLeft}>
+                    <Text style={styles.simpleTokenText}>
+                      {token.symbol} - {token.name}
+                    </Text>
+                    <Text style={styles.tokenBalanceText}>
+                      Balance: {tokenBalances[token.symbol] || 'Loading...'}
+                    </Text>
+                  </View>
                   {selectedToken.symbol === token.symbol && (
                     <Text style={styles.simpleTokenCheck}>✓</Text>
                   )}
@@ -1309,6 +1333,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  tokenItemLeft: {
+    flex: 1,
+  },
+  tokenBalanceText: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
   },
   simpleTokenItemSelected: {
     backgroundColor: '#e3f2fd',
