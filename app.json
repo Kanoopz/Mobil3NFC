@@ -24,14 +24,22 @@
       "permissions": [
         "android.permission.NFC"
       ],
-      "package": "com.kanoopz.NFCTestApp"
+      "package": "com.kanoopz.NFCTestApp",
+      "usesFeatures": [
+        {
+          "name": "android.hardware.nfc.hce",
+          "required": true
+        },
+        {
+          "name": "android.hardware.nfc",
+          "required": true
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "react-native-nfc-manager"
-    ],
+    "plugins": [],
     "extra": {
       "eas": {
         "projectId": "0ccb82dd-4813-46e4-8c2b-a44e5b7504da"

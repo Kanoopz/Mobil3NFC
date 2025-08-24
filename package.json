@@ -13,8 +13,9 @@
     "expo": "~53.0.22",
     "expo-status-bar": "~2.2.3",
     "react": "19.0.0",
-    "react-native": "0.79.6",
-    "react-native-nfc-manager": "^3.16.3",
+    "react-native": "0.79.5",
+    "react-native-hce": "^0.3.0",
+    "react-native-nfc-manager": "^3.14.12",
     "expo-dev-client": "~5.2.4"
   },
   "devDependencies": {
