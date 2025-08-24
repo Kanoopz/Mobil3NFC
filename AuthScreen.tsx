@@ -21,16 +21,11 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   const [email, setEmail] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [authMode, setAuthMode] = useState<'email' | 'quick'>('email');
   const [codeSent, setCodeSent] = useState(false);
-  const [isEmailServiceConfigured, setIsEmailServiceConfigured] = useState(false);
 
   const authService = AuthService.getInstance();
 
-  useEffect(() => {
-    // Check if email service is configured
-    setIsEmailServiceConfigured(authService.isEmailJSConfigured());
-  }, []);
+
 
   const handleEmailVerification = async () => {
     if (!email.trim()) {
@@ -44,7 +39,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
       
       if (result.success) {
         setCodeSent(true);
-        Alert.alert('Success', result.message);
+        // Removed success alert - just proceed silently
       } else {
         Alert.alert('Error', result.message);
       }
@@ -93,42 +88,13 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
     }
   };
 
-  const handleQuickAccess = async () => {
-    if (!email.trim()) {
-      Alert.alert('Error', 'Please enter your email address');
-      return;
-    }
 
-    setIsLoading(true);
-    try {
-      const result = await authService.quickAccess(email.trim());
-      
-      if (result.success) {
-        Alert.alert('Success', result.message, [
-          {
-            text: 'Go to NFC',
-            onPress: onAuthSuccess
-          }
-        ]);
-      } else {
-        Alert.alert('Error', result.message);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleAuth = () => {
-    if (authMode === 'email') {
-      if (codeSent) {
-        handleVerifyCode();
-      } else {
-        handleEmailVerification();
-      }
+    if (codeSent) {
+      handleVerifyCode();
     } else {
-      handleQuickAccess();
+      handleEmailVerification();
     }
   };
 
@@ -138,7 +104,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
       const result = await authService.requestVerificationCode(email.trim());
       
       if (result.success) {
-        Alert.alert('Success', result.message);
+        // Removed success alert - just proceed silently
       } else {
         Alert.alert('Error', result.message);
       }
@@ -156,27 +122,10 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
 
   const getButtonText = () => {
     if (isLoading) return '';
-    if (authMode === 'email') {
-      return codeSent ? 'Verify Code' : 'Send Verification Code';
-    } else {
-      return 'Quick Access';
-    }
+    return codeSent ? 'Verify Code' : 'Send Verification Code';
   };
 
-  const showEmailServiceSetup = () => {
-    Alert.alert(
-      'Email Service Setup Required',
-      'To send real verification emails, you need to set up Resend:\n\n' +
-      '1. Go to resend.com and create a free account\n' +
-      '2. Get your API key from the dashboard\n' +
-      '3. Configure it in the AuthService.ts file\n\n' +
-      'For now, you can use Quick Access mode to test the app.',
-      [
-        { text: 'Switch to Quick Access', onPress: () => setAuthMode('quick') },
-        { text: 'OK' }
-      ]
-    );
-  };
+
 
   return (
     <KeyboardAvoidingView 
@@ -188,39 +137,23 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
           <Text style={styles.title}>Mobil3 NFC App</Text>
           <Text style={styles.subtitle}>Authentication Required</Text>
           
-          {/* Email Service Configuration Status */}
-          {authMode === 'email' && (
-            <View style={[styles.statusContainer, !isEmailServiceConfigured && styles.statusWarning]}>
-              <Text style={[styles.statusText, !isEmailServiceConfigured && styles.statusWarningText]}>
-                {isEmailServiceConfigured ? '✅ Resend Email Service Configured' : '⚠️ Email Service Not Configured'}
-              </Text>
-              {!isEmailServiceConfigured && (
-                <TouchableOpacity style={styles.setupButton} onPress={showEmailServiceSetup}>
-                  <Text style={styles.setupButtonText}>Setup Email Service</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
+
           
           <View style={styles.formContainer}>
             <Text style={styles.label}>
-              {authMode === 'email' && codeSent 
+              {codeSent 
                 ? 'Enter verification code' 
                 : 'Enter your email address'
               }
             </Text>
             <Text style={styles.description}>
-              {authMode === 'email' 
-                ? codeSent 
-                  ? `We sent a 6-digit code to ${email}`
-                  : isEmailServiceConfigured
-                    ? 'We\'ll send you a real verification code to your email via Resend'
-                    : 'Email service not configured. Use Quick Access or setup Resend.'
-                : 'Quick access: No verification required'
+              {codeSent 
+                ? `We sent a 6-digit code to ${email}`
+                : 'We\'ll send you a verification code to your email'
               }
             </Text>
             
-            {authMode === 'email' && codeSent ? (
+            {codeSent ? (
               <TextInput
                 style={styles.input}
                 placeholder="123456"
@@ -246,11 +179,10 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
             <TouchableOpacity 
               style={[
                 styles.button, 
-                isLoading && styles.buttonDisabled,
-                authMode === 'email' && !isEmailServiceConfigured && !codeSent && styles.buttonDisabled
+                isLoading && styles.buttonDisabled
               ]}
               onPress={handleAuth}
-              disabled={isLoading || (authMode === 'email' && !isEmailServiceConfigured && !codeSent)}
+              disabled={isLoading}
             >
               {isLoading ? (
                 <ActivityIndicator color="white" />
@@ -259,7 +191,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               )}
             </TouchableOpacity>
             
-            {authMode === 'email' && codeSent && (
+            {codeSent && (
               <View style={styles.secondaryActions}>
                 <TouchableOpacity 
                   style={styles.secondaryButton}
@@ -279,32 +211,15 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               </View>
             )}
             
-            <TouchableOpacity 
-              style={styles.modeToggle}
-              onPress={() => {
-                setAuthMode(authMode === 'email' ? 'quick' : 'email');
-                setCodeSent(false);
-                setVerificationCode('');
-              }}
-              disabled={isLoading}
-            >
-              <Text style={styles.modeToggleText}>
-                Switch to {authMode === 'email' ? 'Quick Access' : 'Email Verification'}
-              </Text>
-            </TouchableOpacity>
+
           </View>
           
           <View style={styles.infoContainer}>
             <Text style={styles.infoTitle}>
-              {authMode === 'email' ? '📧 Real Email Verification' : '⚡ Quick Access Mode'}
+              📧 Email Verification
             </Text>
             <Text style={styles.infoText}>
-              {authMode === 'email' 
-                ? isEmailServiceConfigured
-                  ? 'Sends real verification codes to your email using Resend email service.'
-                  : 'Requires Resend setup to send real emails. Use Quick Access for testing.'
-                : 'Instant access without verification. Perfect for testing and development.'
-              }
+              We'll send you a verification code to your email address.
             </Text>
           </View>
         </View>

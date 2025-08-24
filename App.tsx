@@ -29,7 +29,7 @@ export default function App() {
     setUserEmail(email);
     
     if (authenticated) {
-      setCurrentScreen('base');
+      setCurrentScreen('nfc'); // Go directly to NFC screen
       // Log user address and check balance
       logUserAddressAndCheckBalance();
         } else {
@@ -92,18 +92,12 @@ export default function App() {
   const handleAuthSuccess = () => {
     setIsAuthenticated(true);
     setUserEmail(authService.getEmail());
-    setCurrentScreen('base');
+    setCurrentScreen('nfc'); // Go directly to NFC screen
     // Log user address and check balance after successful auth
     logUserAddressAndCheckBalance();
   };
 
-  const handleNFCClick = () => {
-    setCurrentScreen('nfc');
-  };
-
-  const handleBack = () => {
-    setCurrentScreen('base');
-  };
+  // Removed handleNFCClick and handleBack since we go directly to NFC screen
 
   const handleLogout = () => {
     Alert.alert(
@@ -135,246 +129,13 @@ export default function App() {
 
   // Show NFC screen if navigating to NFC
   if (currentScreen === 'nfc') {
-    return <NFCScreen onBack={handleBack} />;
+    return <NFCScreen onBack={handleLogout} />;
   }
 
-  // Show main app screen (after authentication)
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.welcomeText}>
-            Welcome, {userEmail ? userEmail.split('@')[0] : 'User'}!
-          </Text>
-          {authService.getEthereumAddress() && (
-            <Text style={styles.addressText}>
-              {authService.getShortEthereumAddress()}
-              </Text>
-          )}
-          <Text style={styles.balanceText}>
-            💰 {monBalance}
-              </Text>
-        </View>
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Text style={styles.logoutButtonText}>Logout</Text>
-            </TouchableOpacity>
-      </View>
-
-      {/* Token Balances Section */}
-      {Object.keys(tokenBalances).length > 0 && (
-        <View style={styles.tokenBalancesSection}>
-          <Text style={styles.tokenBalancesTitle}>🪙 Token Balances:</Text>
-          <View style={styles.tokenBalancesGrid}>
-            {Object.entries(tokenBalances).map(([symbol, balance]) => {
-              const balanceNum = parseFloat(balance);
-              const displayBalance = isNaN(balanceNum) ? '0' : 
-                balanceNum > 0 ? balance : '0';
-              return (
-                <View key={symbol} style={styles.tokenBalanceItem}>
-                  <Text style={styles.tokenBalanceSymbol}>{symbol}</Text>
-                  <Text style={styles.tokenBalanceAmount}>{displayBalance}</Text>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-      )}
-      
-      <View style={styles.content}>
-        <Text style={styles.title}>Mobil3 NFC App</Text>
-        <Text style={styles.subtitle}>Welcome to the NFC Reader & Emulator</Text>
-        
-          <TouchableOpacity 
-          style={styles.nfcButton}
-          onPress={handleNFCClick}
-          >
-          <Text style={styles.nfcButtonText}>NFC</Text>
-          </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={styles.refreshButton}
-          onPress={() => {
-            const address = authService.getEthereumAddress();
-            if (address && address !== 'Invalid Address') {
-              checkMonBalance(address);
-              checkAllTokenBalances(address);
-            }
-          }}
-          disabled={isLoadingBalance}
-        >
-          <Text style={styles.refreshButtonText}>
-            {isLoadingBalance ? '🔄 Refreshing...' : '🔄 Refresh All Balances'}
-          </Text>
-        </TouchableOpacity>
-        
-        <Text style={styles.description}>
-          Tap the NFC button to access the full NFC functionality including reading and emulating NFC tags.
-          </Text>
-        </View>
-    </View>
-  );
+  // This should never be reached since we go directly to NFC screen
+  return null;
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  headerLeft: {
-    flex: 1,
-  },
-  welcomeText: {
-    fontSize: 16,
-    color: '#333',
-    fontWeight: '500',
-  },
-  addressText: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 5,
-  },
-  balanceText: {
-    fontSize: 12,
-    color: '#007AFF',
-    marginTop: 3,
-    fontWeight: '600',
-  },
-  tokenBalancesSection: {
-    backgroundColor: '#f8f9fa',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  tokenBalancesTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-  },
-  tokenBalancesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  tokenBalanceItem: {
-    backgroundColor: 'white',
-    padding: 8,
-    borderRadius: 8,
-    marginBottom: 8,
-    marginRight: 8,
-    minWidth: 80,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  tokenBalanceSymbol: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#007AFF',
-    marginBottom: 2,
-  },
-  tokenBalanceAmount: {
-    fontSize: 11,
-    color: '#666',
-    textAlign: 'center',
-  },
-  logoutButton: {
-    backgroundColor: '#dc3545',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 15,
-  },
-  logoutButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#007AFF',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 18,
-    color: '#666',
-    marginBottom: 40,
-    textAlign: 'center',
-  },
-  nfcButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 60,
-    paddingVertical: 20,
-    borderRadius: 50,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    marginBottom: 30,
-  },
-  nfcButtonText: {
-    color: 'white',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  refreshButton: {
-    backgroundColor: '#28a745',
-    paddingHorizontal: 30,
-    paddingVertical: 12,
-    borderRadius: 25,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  refreshButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  description: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    lineHeight: 24,
-    maxWidth: 300,
-  },
+  // Styles removed since we no longer have a base screen
 });

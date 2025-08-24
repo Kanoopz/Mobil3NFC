@@ -21,6 +21,8 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
   const [selectedToken, setSelectedToken] = useState<Token>(MONAD_TESTNET_TOKENS.find(t => t.symbol === 'MON') || MONAD_TESTNET_TOKENS[0]);
   const [showTokenSelector, setShowTokenSelector] = useState(false);
   const [tokenBalances, setTokenBalances] = useState<{[key: string]: string}>({});
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [monBalance, setMonBalance] = useState<string>('Loading...');
   const [hceSupported, setHceSupported] = useState(false);
   const [nfcSupported, setNfcSupported] = useState(false);
   const [isHceActive, setIsHceActive] = useState(false);
@@ -59,10 +61,12 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
       balanceService.getFormattedBalance(ethereumAddress).then(balance => {
         console.log(`💰 NFC Screen - MON Balance: ${balance}`);
         setTokenBalances(prev => ({ ...prev, MON: balance }));
+        setMonBalance(balance);
       }).catch(error => {
         console.error('❌ NFC Screen - Error checking MON balance:', error);
         // Set a fallback value for MON balance
         setTokenBalances(prev => ({ ...prev, MON: '0.000000' }));
+        setMonBalance('0.000000');
       });
 
       // Check all token balances
@@ -700,17 +704,18 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
     }
   };
 
-  const clearTransactionData = () => {
-    setTransactionHash('');
-    setRecipientAddress('');
-    setPaymentAmount('');
-  };
+
 
   return (
     <View style={styles.container}>
       {/* Back Button */}
       <TouchableOpacity style={styles.backButton} onPress={onBack}>
         <Text style={styles.backButtonText}>← Back</Text>
+      </TouchableOpacity>
+
+      {/* User Menu Button */}
+      <TouchableOpacity style={styles.userMenuButton} onPress={() => setShowUserMenu(true)}>
+        <Text style={styles.userMenuButtonText}>👤</Text>
       </TouchableOpacity>
 
       {/* Ethereum Address Display */}
@@ -841,12 +846,7 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity 
-          style={[styles.buttonContainer, styles.clearButton]}
-          onPress={clearTransactionData}
-        >
-          <Text style={styles.button}>Clear Transaction</Text>
-        </TouchableOpacity>
+
         
         {/* Transaction Status */}
         {isTransactionPending && (
@@ -934,6 +934,98 @@ export default function NFCScreen({ onBack }: NFCScreenProps) {
               onPress={() => setShowTokenSelector(false)}
             >
               <Text style={styles.modalButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* User Menu Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showUserMenu}
+        onRequestClose={() => setShowUserMenu(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.userMenuModal}>
+            <Text style={styles.modalTitle}>👤 User Profile</Text>
+            
+            {/* User Info */}
+            <View style={styles.userInfoSection}>
+              <Text style={styles.userInfoLabel}>Email:</Text>
+              <Text style={styles.userInfoValue}>{authService.getEmail()}</Text>
+              
+              <Text style={styles.userInfoLabel}>Address:</Text>
+              <Text style={styles.userInfoValue}>{authService.getShortEthereumAddress()}</Text>
+              
+              <Text style={styles.userInfoLabel}>MON Balance:</Text>
+              <Text style={styles.userInfoValue}>💰 {monBalance}</Text>
+            </View>
+
+            {/* Token Balances */}
+            {Object.keys(tokenBalances).length > 0 && (
+              <View style={styles.tokenBalancesSection}>
+                <Text style={styles.tokenBalancesTitle}>🪙 Token Balances:</Text>
+                <View style={styles.tokenBalancesGrid}>
+                  {Object.entries(tokenBalances).map(([symbol, balance]) => {
+                    const balanceNum = parseFloat(balance);
+                    const displayBalance = isNaN(balanceNum) ? '0' : 
+                      balanceNum > 0 ? balance : '0';
+                    return (
+                      <View key={symbol} style={styles.tokenBalanceItem}>
+                        <Text style={styles.tokenBalanceSymbol}>{symbol}</Text>
+                        <Text style={styles.tokenBalanceAmount}>{displayBalance}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {/* Action Buttons */}
+            <View style={styles.userMenuButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.refreshButton]}
+                onPress={async () => {
+                  const userAddress = authService.getEthereumAddress();
+                  if (userAddress && userAddress !== 'Invalid Address') {
+                    try {
+                      const balance = await balanceService.getFormattedBalance(userAddress);
+                      setMonBalance(balance);
+                      setTokenBalances(prev => ({ ...prev, MON: balance }));
+                      
+                      const allBalances = await balanceService.getAllTokenBalances(userAddress);
+                      const balanceMap: {[key: string]: string} = {};
+                      allBalances.forEach(balanceInfo => {
+                        balanceMap[balanceInfo.symbol] = balanceInfo.balanceFormatted;
+                      });
+                      setTokenBalances(prev => ({ ...prev, ...balanceMap }));
+                    } catch (error) {
+                      console.error('❌ Error refreshing balances:', error);
+                    }
+                  }
+                }}
+              >
+                <Text style={styles.modalButtonText}>🔄 Refresh Balances</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.modalButton, styles.logoutButton]}
+                onPress={() => {
+                  setShowUserMenu(false);
+                  authService.logout();
+                  onBack(); // This will trigger the logout flow
+                }}
+              >
+                <Text style={styles.modalButtonText}>🚪 Logout</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setShowUserMenu(false)}
+            >
+              <Text style={styles.modalButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1353,5 +1445,101 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#007AFF',
     fontWeight: 'bold',
+  },
+  userMenuButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 1001,
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  userMenuButtonText: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  userMenuModal: {
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 20,
+    margin: 20,
+    maxHeight: '80%',
+    width: '90%',
+  },
+  userInfoSection: {
+    marginBottom: 20,
+    padding: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+  },
+  userInfoLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 5,
+  },
+  userInfoValue: {
+    fontSize: 16,
+    color: '#007AFF',
+    marginBottom: 15,
+    fontFamily: 'monospace',
+  },
+  tokenBalancesSection: {
+    marginBottom: 20,
+  },
+  tokenBalancesTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  tokenBalancesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  tokenBalanceItem: {
+    backgroundColor: 'white',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 8,
+    marginRight: 8,
+    minWidth: 80,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tokenBalanceSymbol: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#007AFF',
+    marginBottom: 2,
+  },
+  tokenBalanceAmount: {
+    fontSize: 11,
+    color: '#666',
+    textAlign: 'center',
+  },
+  userMenuButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 15,
+  },
+  refreshButton: {
+    backgroundColor: '#28a745',
+  },
+  logoutButton: {
+    backgroundColor: '#dc3545',
   },
 });
